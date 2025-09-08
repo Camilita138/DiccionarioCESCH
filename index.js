@@ -123,7 +123,7 @@ const ASESORES = {
   "1291073": "Veyda Pinela"
 };
 
-// === POST /mapear ===
+// === POST /mapear (tu endpoint actual, se queda igual) ===
 app.post("/mapear", (req, res) => {
   const input = req.body;
 
@@ -180,7 +180,7 @@ app.post("/mapear", (req, res) => {
   });
 });
 
-// === GET /lookup/:diccionario/:id ===
+// === GET /lookup/:diccionario/:id (tu endpoint actual, se queda igual) ===
 const DICCIONARIOS = {
   campanas: CAMPANAS,
   cot_china: COT_CHINA,
@@ -200,6 +200,108 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
     return res.status(404).json({ error: "ID no encontrado" });
   }
   res.json({ id, nombre: valor });
+});
+
+// === NUEVO: helpers para el payload de Kommo ===
+const getCF = (arr, targetId) => {
+  if (!Array.isArray(arr)) return null;
+  const f = arr.find(x => String(x.id) === String(targetId));
+  const val = f?.values?.[0]?.value;
+  return val === "" || val === undefined ? null : val;
+};
+
+// IDs reales de tus custom fields en Kommo (ajústalos si cambian)
+const CF_IDS = {
+  Campania: "1289547", // campo "Campañas" que guarda el ID de campaña (p.ej. 1287123)
+  Tipo:     "1017119", // si en tu cuenta lo usas así; si no, cambia
+  CotChina: "1290102"  // si aplica; si no, elimina el uso
+};
+
+// === NUEVO: POST /kommo/translate  (1 sola llamada desde Make) ===
+app.post("/kommo/translate", (req, res) => {
+  try {
+    const payload = req.body || {};
+    const leads = Array.isArray(payload.leads) ? payload.leads : [];
+
+    const outLeads = leads.map(lead => {
+      const status_id = toStr(lead.status_id);
+      const pipeline_id = toStr(lead.pipeline_id); // si algún día agregas diccionario de pipelines
+      const responsible_user_id = toStr(lead.responsible_user_id);
+
+      const Campania_Id = toStr(getCF(lead.custom_fields, CF_IDS.Campania));
+      const TipoRaw     = getCF(lead.custom_fields, CF_IDS.Tipo);     // puede ser ID o texto
+      const CotChina_Id = toStr(getCF(lead.custom_fields, CF_IDS.CotChina));
+
+      // Etapa / Asesor
+      const Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
+      const Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
+
+      // Campaña
+      const Campania_Nombre = CAMPANAS[Campania_Id] || "Desconocido";
+
+      // Cot China
+      const CotChina_Nombre = COT_CHINA[CotChina_Id] || "";
+
+      // Tipo flexible (ID o texto)
+      let Tipo_Id = null, Tipo_Nombre = "Desconocido";
+      if (TipoRaw) {
+        const isNumeric = !isNaN(Number(TipoRaw));
+        if (isNumeric) {
+          Tipo_Id = String(TipoRaw);
+          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
+        } else {
+          const n = normalize(TipoRaw);
+          if (TIPOS_BY_NAME[n]) {
+            Tipo_Id = TIPOS_BY_NAME[n].id;
+            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+          } else {
+            // Si llega un texto no mapeado, devuélvelo tal cual como nombre
+            Tipo_Nombre = TipoRaw;
+          }
+        }
+      }
+
+      // Si más adelante quieres mapear pipeline_id -> nombre, crea un diccionario PIPELINES y úsalo aquí:
+      const Pipeline_Nombre = null; // placeholder opcional
+
+      // Opcional: si vas a Salesforce, traduce Etapa a StageName válido:
+      const stageMapSF = {
+        "Contacto inicial": "Qualification",
+        "DEFINICION DE LISTA": "Prospecting",
+        "COTIZA EL ASESOR": "Proposal/Price Quote",
+        "VENTA CONCRETADA": "Closed Won",
+        "LIQUIDADO": "Closed Won",
+        "COTIZA EL CLIENTE": "Negotiation/Review"
+        // completa tu mapa real de SF aquí
+      };
+      const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
+
+      return {
+        ...lead,
+        mapeo: {
+          Etapa_Legible,
+          Pipeline_Nombre,
+          Asesor_Nombre,
+          Campania_Id: Campania_Id || null,
+          Campania_Nombre,
+          CotChina_Id: CotChina_Id || null,
+          CotChina_Nombre,
+          Tipo_Id,
+          Tipo_Nombre,
+          StageName_SF
+        }
+      };
+    });
+
+    res.json({
+      ok: true,
+      leads: outLeads,
+      account: payload.account || null
+    });
+  } catch (err) {
+    console.error("Error /kommo/translate:", err);
+    res.status(500).json({ ok: false, error: "Error interno" });
+  }
 });
 
 // === Root ===
