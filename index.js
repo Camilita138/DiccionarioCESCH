@@ -190,7 +190,7 @@ const DICCIONARIOS = {
 };
 
 app.get("/lookup/:diccionario/:id", (req, res) => {
-  const diccionario = DICCIONARIOS[req.params.diccionario];
+  const diccionario = DICCIONARIOS[req.params.diccionario.toLowerCase()];
   const id = req.params.id;
   if (!diccionario) {
     return res.status(400).json({ error: "Diccionario no válido" });
