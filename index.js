@@ -1,10 +1,11 @@
+// index.js
 const express = require("express");
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// === Helpers ===
+/* ================= Helpers ================= */
 const toStr = v => (v ?? "").toString();
 const splitIds = s => toStr(s).split(",").map(x => x.trim()).filter(Boolean);
 const normalize = s =>
@@ -22,7 +23,20 @@ const getCF = (arr, targetId) => {
   return val === "" || val === undefined ? null : val;
 };
 
-// === Diccionarios ===
+// Acepta distintas formas del payload (leads, leads.status, status, payload.*)
+function pickLeads(body) {
+  if (Array.isArray(body?.leads)) return body.leads;                   // { leads: [...] }
+  if (Array.isArray(body?.leads?.status)) return body.leads.status;   // { leads: { status: [...] } }
+  if (Array.isArray(body?.status)) return body.status;                 // { status: [...] }
+  if (Array.isArray(body?.payload?.leads)) return body.payload.leads;  // { payload: { leads: [...] } }
+  if (Array.isArray(body?.payload?.leads?.status)) return body.payload.leads.status;
+  return [];
+}
+function pickAccount(body) {
+  return body?.account || body?.payload?.account || null;
+}
+
+/* ================= Diccionarios ================= */
 const CAMPANAS = {
   "1289547": "Campañas",
   "1289543": "Gestión del asesor",
@@ -130,7 +144,52 @@ const ASESORES = {
   "1291073": "Veyda Pinela"
 };
 
-// === POST /mapear (se mantiene) ===
+/* ================= Kommo OAuth + fetch lead ================= */
+// Requiere: KOMMO_CLIENT_ID, KOMMO_CLIENT_SECRET, KOMMO_REFRESH_TOKEN, KOMMO_REDIRECT_URI
+// Opcionales: KOMMO_SUBDOMAIN, KOMMO_ACCESS_TOKEN
+let ACCESS_TOKEN = process.env.KOMMO_ACCESS_TOKEN || null;
+let ACCESS_TOKEN_EXP = 0;
+
+async function refreshAccessToken(subdomain) {
+  const url = `https://${subdomain}.kommo.com/oauth2/access_token`;
+  const body = {
+    client_id: process.env.KOMMO_CLIENT_ID,
+    client_secret: process.env.KOMMO_CLIENT_SECRET,
+    grant_type: "refresh_token",
+    refresh_token: process.env.KOMMO_REFRESH_TOKEN,
+    redirect_uri: process.env.KOMMO_REDIRECT_URI
+  };
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(`Kommo refresh failed ${r.status}`);
+  const data = await r.json();
+  ACCESS_TOKEN = data.access_token;
+  ACCESS_TOKEN_EXP = Date.now() + ((data.expires_in || 3600) * 1000);
+  return ACCESS_TOKEN;
+}
+async function getAccessToken(subdomain) {
+  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
+  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
+  if (ACCESS_TOKEN) return ACCESS_TOKEN; // si lo seteaste manual y no usas refresh
+  throw new Error("No Kommo token configured");
+}
+async function fetchLeadFull(subdomain, id) {
+  const token = await getAccessToken(subdomain);
+  const url = `https://${subdomain}.kommo.com/api/v4/leads/${id}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (r.status === 401 && process.env.KOMMO_REFRESH_TOKEN) {
+    await refreshAccessToken(subdomain);
+    return fetchLeadFull(subdomain, id);
+  }
+  if (!r.ok) throw new Error(`Kommo GET lead ${id} failed ${r.status}`);
+  return r.json();
+}
+
+/* ================= Endpoints existentes ================= */
+// POST /mapear (batch manual por campos)
 app.post("/mapear", (req, res) => {
   const input = req.body;
 
@@ -151,49 +210,29 @@ app.post("/mapear", (req, res) => {
   for (const v of tipoValores) {
     if (TIPOS_BY_ID[v]) { tipoId = v; tipoNombre = TIPOS_BY_ID[v]; break; }
     const n = normalize(v);
-    if (TIPOS_BY_NAME[n]) {
-      tipoId = TIPOS_BY_NAME[n].id;
-      tipoNombre = TIPOS_BY_NAME[n].nombre;
-      break;
-    }
+    if (TIPOS_BY_NAME[n]) { tipoId = TIPOS_BY_NAME[n].id; tipoNombre = TIPOS_BY_NAME[n].nombre; break; }
   }
 
   const inAsesorId = toStr(input.asesor_id);
   const inAsesorTexto = toStr(input.asesor_texto);
   let asesorId = null, asesorNombre = "No encontrado";
-  if (ASESORES[inAsesorId]) {
-    asesorId = inAsesorId;
-    asesorNombre = ASESORES[inAsesorId];
-  } else {
+  if (ASESORES[inAsesorId]) { asesorId = inAsesorId; asesorNombre = ASESORES[inAsesorId]; }
+  else {
     const found = firstIdInFreeText(inAsesorTexto, ASESORES);
     if (found) { asesorId = found; asesorNombre = ASESORES[found]; }
   }
 
   res.json({
-    Campania_Ids: campaniaIds.join(","),
-    Campania_Id: campaniaId,
-    Campania_Nombre: campaniaNombre,
-    CotChina_Id: cotChinaId,
-    CotChina_Nombre: cotChinaNombre,
-    Etapa_Id: etapaId,
-    Etapa_Legible: etapaLegible,
-    Tipo_Id: tipoId,
-    Tipo_Nombre: tipoNombre,
-    Tipos_Detectados: tipoValores.join("|"),
-    Asesor_Id: asesorId,
-    Asesor_Nombre: asesorNombre
+    Campania_Ids: campaniaIds.join(","), Campania_Id: campaniaId, Campania_Nombre: campaniaNombre,
+    CotChina_Id: cotChinaId, CotChina_Nombre: cotChinaNombre,
+    Etapa_Id: etapaId, Etapa_Legible: etapaLegible,
+    Tipo_Id: tipoId, Tipo_Nombre: tipoNombre, Tipos_Detectados: tipoValores.join("|"),
+    Asesor_Id: asesorId, Asesor_Nombre: asesorNombre
   });
 });
 
-// === GET /lookup/:diccionario/:id (se mantiene) ===
-const DICCIONARIOS = {
-  campanas: CAMPANAS,
-  cot_china: COT_CHINA,
-  etapas: ETAPAS,
-  tipos: TIPOS_BY_ID,
-  asesores: ASESORES
-};
-
+// GET /lookup/:diccionario/:id
+const DICCIONARIOS = { campanas: CAMPANAS, cot_china: COT_CHINA, etapas: ETAPAS, tipos: TIPOS_BY_ID, asesores: ASESORES };
 app.get("/lookup/:diccionario/:id", (req, res) => {
   const diccionario = DICCIONARIOS[req.params.diccionario.toLowerCase()];
   const id = req.params.id;
@@ -203,83 +242,67 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id, nombre: valor });
 });
 
-// === NUEVO: helpers para payloads variables de Kommo ===
-function pickLeads(body) {
-  if (Array.isArray(body?.leads)) return body.leads;                   // { leads: [...] }
-  if (Array.isArray(body?.leads?.status)) return body.leads.status;   // { leads: { status: [...] } }
-  if (Array.isArray(body?.status)) return body.status;                 // { status: [...] }
-  if (Array.isArray(body?.payload?.leads)) return body.payload.leads;  // { payload: { leads: [...] } }
-  if (Array.isArray(body?.payload?.leads?.status)) return body.payload.leads.status;
-  return [];
-}
-function pickAccount(body) {
-  return body?.account || body?.payload?.account || null;
-}
-
-// IDs de custom fields en Kommo (ajusta si cambian)
-const CF_IDS = {
-  Campania: "1289547",
-  Tipo:     "1017119",
-  CotChina: "1290102"
-};
-
-// === NUEVO: POST /kommo/translate (1 sola llamada desde Make) ===
-app.post("/kommo/translate", (req, res) => {
+/* ============== NUEVO: /kommo/translate con enriquecimiento ============== */
+const CF_IDS = { Campania: "1289547", Tipo: "1017119", CotChina: "1290102" };
+app.post("/kommo/translate", async (req, res) => {
   try {
-    // Modo debug opcional: ?debug=1 te devuelve lo recibido
+    // Debug opcional: ver exactamente lo recibido
     if (req.query.debug === "1") {
-      return res.json({
-        ok: true,
-        receivedKeys: Object.keys(req.body || {}),
-        sample: req.body
-      });
+      return res.json({ ok: true, receivedKeys: Object.keys(req.body || {}), sample: req.body });
     }
 
     const payload = req.body || {};
     const leadsIn = pickLeads(payload);
-    const accountIn = pickAccount(payload);
+    const accountIn = pickAccount(payload) || {};
+    const subdomain = accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "gruporegalado";
 
-    const outLeads = leadsIn.map(lead => {
+    const outLeads = [];
+    for (const l of leadsIn) {
+      let lead = { ...l };
+
+      // Si faltan campos críticos, enriquece con Kommo
+      const needsEnrich = !(lead?.responsible_user_id && Array.isArray(lead?.custom_fields));
+      if (needsEnrich && lead?.id) {
+        try {
+          const full = await fetchLeadFull(subdomain, lead.id);
+          // La API de Kommo /leads/{id} devuelve el lead plano
+          // Mezclamos sin pisar lo ya presente
+          lead = { ...lead, ...full };
+        } catch (e) {
+          console.warn("Enrichment failed for lead", l.id, e.message);
+        }
+      }
+
       const status_id = toStr(lead.status_id);
       const pipeline_id = toStr(lead.pipeline_id);
       const responsible_user_id = toStr(lead.responsible_user_id);
       const custom_fields = lead.custom_fields;
 
-      // Custom fields (si no vienen, getCF devuelve null)
       const Campania_Id = toStr(getCF(custom_fields, CF_IDS.Campania));
-      const TipoRaw     = getCF(custom_fields, CF_IDS.Tipo);     // puede ser ID o texto
+      const TipoRaw     = getCF(custom_fields, CF_IDS.Tipo);     // puede venir como ID o texto
       const CotChina_Id = toStr(getCF(custom_fields, CF_IDS.CotChina));
 
-      // Etapa / Asesor
-      const Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
-      const Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
-
-      // Campaña / Cot China
+      const Etapa_Legible   = ETAPAS[status_id] || "Etapa desconocida";
+      const Asesor_Nombre   = ASESORES[responsible_user_id] || "No encontrado";
       const Campania_Nombre = CAMPANAS[Campania_Id] || "Desconocido";
       const CotChina_Nombre = COT_CHINA[CotChina_Id] || "";
 
-      // Tipo flexible (ID o texto)
+      // Tipo flexible: ID o texto
       let Tipo_Id = null, Tipo_Nombre = "Desconocido";
       if (TipoRaw) {
         const isNumeric = !isNaN(Number(TipoRaw));
-        if (isNumeric) {
-          Tipo_Id = String(TipoRaw);
-          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
-        } else {
+        if (isNumeric) { Tipo_Id = String(TipoRaw); Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido"; }
+        else {
           const n = normalize(TipoRaw);
-          if (TIPOS_BY_NAME[n]) {
-            Tipo_Id = TIPOS_BY_NAME[n].id;
-            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
-          } else {
-            Tipo_Nombre = String(TipoRaw);
-          }
+          if (TIPOS_BY_NAME[n]) { Tipo_Id = TIPOS_BY_NAME[n].id; Tipo_Nombre = TIPOS_BY_NAME[n].nombre; }
+          else { Tipo_Nombre = String(TipoRaw); }
         }
       }
 
-      // Pipeline → nombre (si algún día agregas diccionario de pipelines)
+      // Pipeline → nombre (si agregas un diccionario PIPELINES, mapéalo aquí)
       const Pipeline_Nombre = null;
 
-      // Opcional: StageName SF (ajusta a tu picklist real)
+      // Opcional: StageName para Salesforce (ajusta a tu picklist)
       const stageMapSF = {
         "Contacto inicial": "Qualification",
         "DEFINICION DE LISTA": "Prospecting",
@@ -290,8 +313,11 @@ app.post("/kommo/translate", (req, res) => {
       };
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
-      return {
-        ...lead,
+      outLeads.push({
+        ...l, // conservamos lo del webhook original
+        responsible_user_id,
+        pipeline_id,
+        custom_fields, // tras enriquecimiento si se obtuvo
         mapeo: {
           Etapa_Legible,
           Pipeline_Nombre,
@@ -304,25 +330,16 @@ app.post("/kommo/translate", (req, res) => {
           Tipo_Nombre,
           StageName_SF
         }
-      };
-    });
+      });
+    }
 
-    res.json({
-      ok: true,
-      leads: outLeads,
-      account: accountIn
-    });
+    res.json({ ok: true, leads: outLeads, account: accountIn });
   } catch (err) {
     console.error("Error /kommo/translate:", err);
     res.status(500).json({ ok: false, error: "Error interno" });
   }
 });
 
-// === Root ===
-app.get("/", (req, res) => {
-  res.send("✅ DiccionarioCESCH API funcionando.");
-});
-
-app.listen(PORT, () => {
-  console.log("✅ Servidor corriendo en puerto", PORT);
-});
+/* ================= Root & Listen ================= */
+app.get("/", (req, res) => res.send("✅ DiccionarioCESCH API funcionando."));
+app.listen(PORT, () => console.log("✅ Servidor corriendo en puerto", PORT));
