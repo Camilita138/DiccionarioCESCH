@@ -5,32 +5,67 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* ================= Helpers ================= */
-const toStr = v => (v ?? "").toString();
-const splitIds = s => toStr(s).split(",").map(x => x.trim()).filter(Boolean);
-const normalize = s =>
+/* ========================= Helpers ========================= */
+
+const toStr = (v) => (v ?? "").toString();
+const NORM = (s) =>
   toStr(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-const firstMatchFromList = (arr, mapObj) => arr.find(id => mapObj[id]) || null;
+
+const splitIds = (s) => toStr(s).split(",").map((x) => x.trim()).filter(Boolean);
+const firstMatchFromList = (arr, mapObj) => arr.find((id) => mapObj[id]) || null;
 const firstIdInFreeText = (text, mapObj) => {
   const ids = toStr(text).match(/\d+/g) || [];
   return firstMatchFromList(ids, mapObj);
 };
-// Extrae un custom field por ID desde arreglo normalizado {id, values}
+
+// Normaliza CFs de Kommo (v4) a { id, values } como usa el resto del código
+const normalizeCFs = (lead) => {
+  if (Array.isArray(lead?.custom_fields)) return lead.custom_fields;
+  if (Array.isArray(lead?.custom_fields_values)) {
+    return lead.custom_fields_values.map((cf) => ({
+      id: String(cf.field_id),
+      values: cf.values,
+    }));
+  }
+  return [];
+};
+
+// Extrae un custom field (forma normalizada {id, values})
 const getCF = (arr, targetId) => {
   if (!Array.isArray(arr)) return null;
-  const f = arr.find(x => String(x.id) === String(targetId));
+  const f = arr.find((x) => String(x.id) === String(targetId));
   const val = f?.values?.[0]?.value;
   return val === "" || val === undefined ? null : val;
 };
 
+// Versión extendida: devuelve value/enum_id/enum_ids para select/multiselect
+const getCFx = (arr, targetId) => {
+  if (!Array.isArray(arr)) return { value: null, enum_id: null, enum_ids: [] };
+  const f = arr.find((x) => String(x.id) === String(targetId));
+  const v = f?.values?.[0] || {};
+  const enumIds = Array.isArray(f?.values)
+    ? f.values.map((x) => x?.enum_id).filter(Boolean)
+    : [];
+  return { value: v.value ?? null, enum_id: v.enum_id ?? null, enum_ids: enumIds };
+};
+
+// Convierte "URL carpeta del Cliente" -> "Url_Carpeta_Del_Cliente"
+const keyify = (label) =>
+  NORM(label)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("_");
+
 // Acepta distintas formas del payload (leads, leads.status, status, payload.*)
 function pickLeads(body) {
-  const asArray = v => Array.isArray(v) ? v : (v && typeof v === "object" ? [v] : []);
-  if (Array.isArray(body?.leads)) return body.leads;                 // { leads: [...] }
-  if (body?.leads?.status) return asArray(body.leads.status);       // { leads: { status: [...] } }
-  if (Array.isArray(body?.status)) return body.status;               // { status: [...] }
+  const asArray = (v) => (Array.isArray(v) ? v : v && typeof v === "object" ? [v] : []);
+  if (Array.isArray(body?.leads)) return body.leads; // { leads: [...] }
+  if (body?.leads?.status) return asArray(body.leads.status); // { leads: { status: [...] } }
+  if (Array.isArray(body?.status)) return body.status; // { status: [...] }
   if (body?.status) return asArray(body.status);
-  if (Array.isArray(body?.payload?.leads)) return body.payload.leads;  // { payload: { leads: [...] } }
+  if (Array.isArray(body?.payload?.leads)) return body.payload.leads; // { payload: { leads: [...] } }
   if (body?.payload?.leads?.status) return asArray(body.payload.leads.status);
   return [];
 }
@@ -38,7 +73,8 @@ function pickAccount(body) {
   return body?.account || body?.payload?.account || null;
 }
 
-/* ================= Diccionarios ================= */
+/* ========================= Diccionarios (negocio) ========================= */
+
 const CAMPANAS = {
   "1289547": "Campañas",
   "1289543": "Gestión del asesor",
@@ -81,14 +117,14 @@ const CAMPANAS = {
   "1290988": "sem.napo.24.07.2025",
   "1290992": "web.yiwu.20.07.2025",
   "1291077": "sem.loja.24.07.2025",
-  "1291299": "WEB LC"
+  "1291299": "WEB LC",
 };
 
 const COT_CHINA = {
   "1289523": "Proveedor Cliente",
   "1289525": "Cotizador",
   "1289527": "Vendedor",
-  "1289529": "Recotizado"
+  "1289529": "Recotizado",
 };
 
 const ETAPAS = {
@@ -104,7 +140,7 @@ const ETAPAS = {
   "58474135": "LIQUIDACION ENVIADA",
   "58474143": "CONTRATO",
   "73578024": "VENTA CONCRETADA",
-  "59561095": "SERVICIOS CAMARA"
+  "59561095": "SERVICIOS CAMARA",
 };
 
 const TIPOS_BY_ID = {
@@ -112,10 +148,10 @@ const TIPOS_BY_ID = {
   "1276028": "Negocio Nuevo 1",
   "1284403": "Negocio Nuevo 2",
   "1287460": "Asignado",
-  "1287462": "Recuperado"
+  "1287462": "Recuperado",
 };
 const TIPOS_BY_NAME = Object.fromEntries(
-  Object.entries(TIPOS_BY_ID).map(([id, nombre]) => [normalize(nombre), { id, nombre }])
+  Object.entries(TIPOS_BY_ID).map(([id, nombre]) => [NORM(nombre), { id, nombre }])
 );
 
 const ASESORES = {
@@ -143,16 +179,17 @@ const ASESORES = {
   "1287189": "Want",
   "1287293": "Kgallardo",
   "1290976": "Damaris Ñacato",
-  "1291073": "Veyda Pinela"
+  "1291073": "Veyda Pinela",
 };
 
-/* ================= Kommo auth & fetch ================= */
-// Soporta API KEY (recomendado) y, si existiera, OAuth refresh.
-let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
+/* ========================= Auth & fetch Kommo ========================= */
+// Soporta API KEY (recomendado) y OAuth refresh si existiera.
+let ACCESS_TOKEN = null,
+  ACCESS_TOKEN_EXP = 0;
 
 // Usa API KEY si está; si no, intenta OAuth (si hay refresh token)
 async function getAccessToken(subdomain) {
-  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // API KEY de larga duración
+  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // SIN "Bearer"
   if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
   if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
   if (ACCESS_TOKEN) return ACCESS_TOKEN;
@@ -166,31 +203,19 @@ async function refreshAccessToken(subdomain) {
     client_secret: process.env.KOMMO_CLIENT_SECRET,
     grant_type: "refresh_token",
     refresh_token: process.env.KOMMO_REFRESH_TOKEN,
-    redirect_uri: process.env.KOMMO_REDIRECT_URI
+    redirect_uri: process.env.KOMMO_REDIRECT_URI,
   };
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`Kommo refresh failed ${r.status}`);
   const data = await r.json();
   ACCESS_TOKEN = data.access_token;
-  ACCESS_TOKEN_EXP = Date.now() + ((data.expires_in || 3600) * 1000);
+  ACCESS_TOKEN_EXP = Date.now() + (data.expires_in || 3600) * 1000;
   return ACCESS_TOKEN;
 }
-
-// Normaliza v4: custom_fields_values -> { id, values } como espera getCF
-const normalizeCFs = (lead) => {
-  if (Array.isArray(lead?.custom_fields)) return lead.custom_fields;
-  if (Array.isArray(lead?.custom_fields_values)) {
-    return lead.custom_fields_values.map(cf => ({
-      id: String(cf.field_id),
-      values: cf.values
-    }));
-  }
-  return [];
-};
 
 // GET lead completo; si /leads/{id} da 404, prueba /leads?filter[id]=
 async function fetchLeadFull(subdomain, id) {
@@ -232,8 +257,101 @@ async function fetchUserName(subdomain, userId) {
   return data?.name || null;
 }
 
-/* ================= Endpoints existentes ================= */
-// POST /mapear (batch manual por campos)
+/* ====== Auto-diccionarios de Custom Fields (descarga y cachea) ====== */
+
+let CF_CACHE = { ts: 0, byId: {}, byIdType: {}, byIdLabel: {} }; // { [fieldId]: { [enum_id]: "Label" } }
+
+async function ensureLeadFieldDefs(subdomain, getAccessTokenFn) {
+  const MAX_AGE = 10 * 60 * 1000; // 10 minutos
+  if (Date.now() - CF_CACHE.ts < MAX_AGE && Object.keys(CF_CACHE.byId).length)
+    return CF_CACHE;
+
+  const token = await getAccessTokenFn(subdomain);
+  let page = 1,
+    done = false;
+  const byId = {},
+    byType = {},
+    byLabel = {};
+
+  while (!done) {
+    const url = `https://${subdomain}.kommo.com/api/v4/leads/custom_fields?page=${page}`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new Error(`GET custom_fields ${r.status}`);
+    const data = await r.json();
+    const items = Array.isArray(data?._embedded?.custom_fields)
+      ? data._embedded.custom_fields
+      : [];
+    for (const f of items) {
+      byType[String(f.id)] = f.type; // select, multiselect, text, url, numeric, date, ...
+      byLabel[String(f.id)] = f.name; // etiqueta visible
+      if (Array.isArray(f?.enums)) {
+        byId[String(f.id)] = {};
+        for (const e of f.enums) {
+          byId[String(f.id)][String(e.id)] = e.value; // enum_id -> label
+        }
+      }
+    }
+    const hasNext = data?._links?.next?.href;
+    if (hasNext) page += 1;
+    else done = true;
+  }
+  CF_CACHE = { ts: Date.now(), byId, byIdType: byType, byIdLabel: byLabel };
+  return CF_CACHE;
+}
+
+// Usa las definiciones para traducir un CF (select/multiselect/otros)
+function mapFromDefs(cfData, defs, fieldId) {
+  const enumsMap = defs.byId[String(fieldId)] || {};
+  const fieldType = defs.byIdType[String(fieldId)] || "";
+  const fieldLabel = defs.byIdLabel[String(fieldId)] || `CF_${fieldId}`;
+
+  // SELECT
+  if (fieldType === "select") {
+    if (cfData.enum_id && enumsMap[String(cfData.enum_id)]) {
+      return {
+        key: keyify(fieldLabel),
+        id: String(cfData.enum_id),
+        name: enumsMap[String(cfData.enum_id)],
+      };
+    }
+    if (cfData.value) {
+      const byName = Object.fromEntries(
+        Object.entries(enumsMap).map(([id, name]) => [NORM(name), id])
+      );
+      const n = NORM(cfData.value);
+      if (byName[n])
+        return { key: keyify(fieldLabel), id: byName[n], name: enumsMap[byName[n]] };
+      return { key: keyify(fieldLabel), id: null, name: String(cfData.value) };
+    }
+    return { key: keyify(fieldLabel), id: null, name: "" };
+  }
+
+  // MULTISELECT
+  if (fieldType === "multiselect") {
+    const ids = (cfData.enum_ids || []).map(String);
+    const names = ids.map((id) => enumsMap[id] || "").filter(Boolean);
+    return { key: keyify(fieldLabel), ids, names };
+  }
+
+  // Otros tipos (texto/url/num/fecha...)
+  return { key: keyify(fieldLabel), value: cfData.value ?? "" };
+}
+
+/* === Lista de CFs que quieres que salgan “bonitos” (añade todos los que necesites) === */
+const CF_EXPORT = [
+  { id: "1019903" }, // Campaña (tu campo, label "Campaña" o similar)
+  { id: "1021315" }, // Cot China
+  { id: "1017119" }, // Tipo
+  // Ejemplos que vi en pantalla (verifica IDs exactos en tu JSON/inspector):
+  // { id: "100431" }, // URL carpeta del Cliente
+  // { id: "100649" }, // URL Oportunidad SF
+  // { id: "102246" }, // URL OP2
+  // ... añade todos los que quieras
+];
+
+/* ========================= Endpoints existentes ========================= */
+
+// POST /mapear (legacy manual)
 app.post("/mapear", (req, res) => {
   const input = req.body;
 
@@ -250,33 +368,61 @@ app.post("/mapear", (req, res) => {
   const etapaLegible = ETAPAS[etapaId] || "Etapa desconocida";
 
   const tipoValores = splitIds(input.tipo_enum_ids);
-  let tipoId = null, tipoNombre = "Desconocido";
+  let tipoId = null,
+    tipoNombre = "Desconocido";
   for (const v of tipoValores) {
-    if (TIPOS_BY_ID[v]) { tipoId = v; tipoNombre = TIPOS_BY_ID[v]; break; }
-    const n = normalize(v);
-    if (TIPOS_BY_NAME[n]) { tipoId = TIPOS_BY_NAME[n].id; tipoNombre = TIPOS_BY_NAME[n].nombre; break; }
+    if (TIPOS_BY_ID[v]) {
+      tipoId = v;
+      tipoNombre = TIPOS_BY_ID[v];
+      break;
+    }
+    const n = NORM(v);
+    if (TIPOS_BY_NAME[n]) {
+      tipoId = TIPOS_BY_NAME[n].id;
+      tipoNombre = TIPOS_BY_NAME[n].nombre;
+      break;
+    }
   }
 
   const inAsesorId = toStr(input.asesor_id);
   const inAsesorTexto = toStr(input.asesor_texto);
-  let asesorId = null, asesorNombre = "No encontrado";
-  if (ASESORES[inAsesorId]) { asesorId = inAsesorId; asesorNombre = ASESORES[inAsesorId]; }
-  else {
+  let asesorId = null,
+    asesorNombre = "No encontrado";
+  if (ASESORES[inAsesorId]) {
+    asesorId = inAsesorId;
+    asesorNombre = ASESORES[inAsesorId];
+  } else {
     const found = firstIdInFreeText(inAsesorTexto, ASESORES);
-    if (found) { asesorId = found; asesorNombre = ASESORES[found]; }
+    if (found) {
+      asesorId = found;
+      asesorNombre = ASESORES[found];
+    }
   }
 
   res.json({
-    Campania_Ids: campaniaIds.join(","), Campania_Id: campaniaId, Campania_Nombre: campaniaNombre,
-    CotChina_Id: cotChinaId, CotChina_Nombre: cotChinaNombre,
-    Etapa_Id: etapaId, Etapa_Legible: etapaLegible,
-    Tipo_Id: tipoId, Tipo_Nombre: tipoNombre, Tipos_Detectados: tipoValores.join("|"),
-    Asesor_Id: asesorId, Asesor_Nombre: asesorNombre
+    Campania_Ids: campaniaIds.join(","),
+    Campania_Id: campaniaId,
+    Campania_Nombre: campaniaNombre,
+    CotChina_Id: cotChinaId,
+    CotChina_Nombre: cotChinaNombre,
+    Etapa_Id: etapaId,
+    Etapa_Legible: etapaLegible,
+    Tipo_Id: tipoId,
+    Tipo_Nombre: tipoNombre,
+    Tipos_Detectados: tipoValores.join("|"),
+    Asesor_Id: asesorId,
+    Asesor_Nombre: asesorNombre,
   });
 });
 
 // GET /lookup/:diccionario/:id
-const DICCIONARIOS = { campanas: CAMPANAS, cot_china: COT_CHINA, etapas: ETAPAS, tipos: TIPOS_BY_ID, asesores: ASESORES };
+const DICCIONARIOS = {
+  campanas: CAMPANAS,
+  cot_china: COT_CHINA,
+  etapas: ETAPAS,
+  tipos: TIPOS_BY_ID,
+  asesores: ASESORES,
+};
 app.get("/lookup/:diccionario/:id", (req, res) => {
   const diccionario = DICCIONARIOS[req.params.diccionario.toLowerCase()];
   const id = req.params.id;
@@ -286,33 +432,52 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id, nombre: valor });
 });
 
-/* ============== NUEVO: /kommo/translate con enriquecimiento ============== */
-const CF_IDS = { Campania: "1289547", Tipo: "1017119", CotChina: "1290102" };
+/* ============== /kommo/translate (enriquece + mapea TODOS los CF) ============== */
 
 app.post("/kommo/translate", async (req, res) => {
   try {
-    // Debug opcional: ver exactamente lo recibido
+    // Debug opcional: ?debug=1
     if (req.query.debug === "1") {
-      return res.json({ ok: true, receivedKeys: Object.keys(req.body || {}), sample: req.body });
+      return res.json({
+        ok: true,
+        receivedKeys: Object.keys(req.body || {}),
+        sample: req.body,
+      });
     }
 
     const payload = req.body || {};
     const leadsIn = pickLeads(payload);
     const accountIn = pickAccount(payload) || {};
-    const subdomain = (accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "").trim();
+    const subdomain =
+      (accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "").trim();
+
+    // Auto-diccionarios de CF (para traducir enum_id → label)
+    let defs = null;
+    if (subdomain) {
+      try {
+        defs = await ensureLeadFieldDefs(subdomain, getAccessToken);
+      } catch (e) {
+        console.warn("No se pudieron cargar definiciones de CF:", e.message);
+      }
+    }
 
     const outLeads = [];
     for (const l of leadsIn) {
       let lead = { ...l };
 
-      // Si faltan campos críticos, enriquece desde Kommo
-      const missingCFs = !(lead?.custom_fields) && !(lead?.custom_fields_values);
+      const missingCFs = !lead?.custom_fields && !lead?.custom_fields_values;
       const needsEnrich = !(lead?.responsible_user_id) || missingCFs;
       if (needsEnrich && lead?.id && subdomain) {
         try {
           const full = await fetchLeadFull(subdomain, lead.id);
-          // Merge conservando id/status/pipeline del webhook si venían
-          lead = { ...full, ...lead, id: full.id || lead.id, status_id: lead.status_id || full.status_id, pipeline_id: lead.pipeline_id || full.pipeline_id };
+          // Merge (conserva id/status/pipeline del webhook si ya venían)
+          lead = {
+            ...full,
+            ...lead,
+            id: full.id || lead.id,
+            status_id: lead.status_id || full.status_id,
+            pipeline_id: lead.pipeline_id || full.pipeline_id,
+          };
         } catch (e) {
           console.warn("Enrichment failed for lead", l.id, e.message);
         }
@@ -320,74 +485,57 @@ app.post("/kommo/translate", async (req, res) => {
 
       const status_id = toStr(lead.status_id);
       const responsible_user_id = toStr(lead.responsible_user_id);
-
-      // Normaliza CFs a la forma {id, values}
       const custom_fields = normalizeCFs(lead);
 
-      // CFs
-      const Campania_Id = toStr(getCF(custom_fields, CF_IDS.Campania));
-      const TipoRaw     = getCF(custom_fields, CF_IDS.Tipo);     // puede ser ID o texto
-      const CotChina_Id = toStr(getCF(custom_fields, CF_IDS.CotChina));
-
-      // Etapa
+      /* ====== Etapa + Asesor ====== */
       const Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
-
-      // Asesor: diccionario y fallback API users
       let Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
       if (Asesor_Nombre === "No encontrado" && subdomain && responsible_user_id) {
         const fetched = await fetchUserName(subdomain, responsible_user_id);
         if (fetched) Asesor_Nombre = fetched;
       }
 
-      // Campaña / Cot China
-      const Campania_Nombre = Campania_Id ? (CAMPANAS[Campania_Id] || "Desconocido") : "Desconocido";
-      const CotChina_Nombre = CotChina_Id ? (COT_CHINA[CotChina_Id] || "") : "";
+      /* ====== Auto-mapeo de CF EXPORTADOS ====== */
+      const auto = {};
+      if (defs) {
+        for (const item of CF_EXPORT) {
+          const cf = getCFx(custom_fields, item.id);
+          const mapped = mapFromDefs(cf, defs, item.id);
 
-      // Tipo flexible (ID o texto)
-      let Tipo_Id = null, Tipo_Nombre = "Desconocido";
-      if (TipoRaw) {
-        const isNumeric = !isNaN(Number(TipoRaw));
-        if (isNumeric) {
-          Tipo_Id = String(TipoRaw);
-          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
-        } else {
-          const n = normalize(TipoRaw);
-          if (TIPOS_BY_NAME[n]) {
-            Tipo_Id = TIPOS_BY_NAME[n].id;
-            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+          if ("id" in mapped || "name" in mapped) {
+            auto[`${mapped.key}_Id`] = mapped.id ?? null;
+            auto[`${mapped.key}_Nombre`] = mapped.name ?? "";
+          } else if ("ids" in mapped || "names" in mapped) {
+            auto[`${mapped.key}_Ids`] = mapped.ids || [];
+            auto[`${mapped.key}_Nombres`] = mapped.names || [];
           } else {
-            Tipo_Nombre = String(TipoRaw);
+            auto[mapped.key] = mapped.value ?? "";
           }
         }
       }
 
-      // Opcional: StageName para Salesforce (ajusta a tu picklist real)
+      /* ====== StageName para SF (ajusta a tu picklist real) ====== */
       const stageMapSF = {
         "Contacto inicial": "Qualification",
         "DEFINICION DE LISTA": "Prospecting",
         "COTIZA EL ASESOR": "Proposal/Price Quote",
         "COTIZA EL CLIENTE": "Negotiation/Review",
-        "LIQUIDADO": "Closed Won",
-        "VENTA CONCRETADA": "Closed Won"
+        LIQUIDADO: "Closed Won",
+        "VENTA CONCRETADA": "Closed Won",
       };
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
       outLeads.push({
-        ...l, // lo del webhook original
+        ...l, // datos tal cual llegaron del webhook
         responsible_user_id,
-        custom_fields,
+        custom_fields, // normalizados
         mapeo: {
           Etapa_Legible,
-          Pipeline_Nombre: null,
+          Pipeline_Nombre: null, // si luego quieres mapear pipeline, añade un diccionario
           Asesor_Nombre,
-          Campania_Id: Campania_Id || null,
-          Campania_Nombre,
-          CotChina_Id: CotChina_Id || null,
-          CotChina_Nombre,
-          Tipo_Id,
-          Tipo_Nombre,
-          StageName_SF
-        }
+          StageName_SF,
+          ...auto, // aquí vienen TODOS los campos exportados con nombres legibles
+        },
       });
     }
 
@@ -398,6 +546,7 @@ app.post("/kommo/translate", async (req, res) => {
   }
 });
 
-/* ================= Root & Listen ================= */
+/* ========================= Root & Listen ========================= */
+
 app.get("/", (req, res) => res.send("✅ DiccionarioCESCH API funcionando."));
 app.listen(PORT, () => console.log("✅ Servidor corriendo en puerto", PORT));
