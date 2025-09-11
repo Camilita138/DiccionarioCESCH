@@ -15,7 +15,7 @@ const firstIdInFreeText = (text, mapObj) => {
   const ids = toStr(text).match(/\d+/g) || [];
   return firstMatchFromList(ids, mapObj);
 };
-// Extrae un custom field por ID desde el array de Kommo (si existe)
+// Extrae un custom field por ID desde arreglo normalizado {id, values}
 const getCF = (arr, targetId) => {
   if (!Array.isArray(arr)) return null;
   const f = arr.find(x => String(x.id) === String(targetId));
@@ -25,11 +25,13 @@ const getCF = (arr, targetId) => {
 
 // Acepta distintas formas del payload (leads, leads.status, status, payload.*)
 function pickLeads(body) {
-  if (Array.isArray(body?.leads)) return body.leads;                   // { leads: [...] }
-  if (Array.isArray(body?.leads?.status)) return body.leads.status;   // { leads: { status: [...] } }
-  if (Array.isArray(body?.status)) return body.status;                 // { status: [...] }
+  const asArray = v => Array.isArray(v) ? v : (v && typeof v === "object" ? [v] : []);
+  if (Array.isArray(body?.leads)) return body.leads;                 // { leads: [...] }
+  if (body?.leads?.status) return asArray(body.leads.status);       // { leads: { status: [...] } }
+  if (Array.isArray(body?.status)) return body.status;               // { status: [...] }
+  if (body?.status) return asArray(body.status);
   if (Array.isArray(body?.payload?.leads)) return body.payload.leads;  // { payload: { leads: [...] } }
-  if (Array.isArray(body?.payload?.leads?.status)) return body.payload.leads.status;
+  if (body?.payload?.leads?.status) return asArray(body.payload.leads.status);
   return [];
 }
 function pickAccount(body) {
@@ -144,11 +146,18 @@ const ASESORES = {
   "1291073": "Veyda Pinela"
 };
 
-/* ================= Kommo OAuth + fetch lead ================= */
-// Requiere: KOMMO_CLIENT_ID, KOMMO_CLIENT_SECRET, KOMMO_REFRESH_TOKEN, KOMMO_REDIRECT_URI
-// Opcionales: KOMMO_SUBDOMAIN, KOMMO_ACCESS_TOKEN
-let ACCESS_TOKEN = process.env.KOMMO_ACCESS_TOKEN || null;
-let ACCESS_TOKEN_EXP = 0;
+/* ================= Kommo auth & fetch ================= */
+// Soporta API KEY (recomendado) y, si existiera, OAuth refresh.
+let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
+
+// Usa API KEY si está; si no, intenta OAuth (si hay refresh token)
+async function getAccessToken(subdomain) {
+  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // API KEY de larga duración
+  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
+  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
+  if (ACCESS_TOKEN) return ACCESS_TOKEN;
+  throw new Error("No Kommo token configured (set KOMMO_API_TOKEN or OAuth envs)");
+}
 
 async function refreshAccessToken(subdomain) {
   const url = `https://${subdomain}.kommo.com/oauth2/access_token`;
@@ -170,22 +179,57 @@ async function refreshAccessToken(subdomain) {
   ACCESS_TOKEN_EXP = Date.now() + ((data.expires_in || 3600) * 1000);
   return ACCESS_TOKEN;
 }
-async function getAccessToken(subdomain) {
-  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
-  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
-  if (ACCESS_TOKEN) return ACCESS_TOKEN; // si lo seteaste manual y no usas refresh
-  throw new Error("No Kommo token configured");
-}
+
+// Normaliza v4: custom_fields_values -> { id, values } como espera getCF
+const normalizeCFs = (lead) => {
+  if (Array.isArray(lead?.custom_fields)) return lead.custom_fields;
+  if (Array.isArray(lead?.custom_fields_values)) {
+    return lead.custom_fields_values.map(cf => ({
+      id: String(cf.field_id),
+      values: cf.values
+    }));
+  }
+  return [];
+};
+
+// GET lead completo; si /leads/{id} da 404, prueba /leads?filter[id]=
 async function fetchLeadFull(subdomain, id) {
   const token = await getAccessToken(subdomain);
-  const url = `https://${subdomain}.kommo.com/api/v4/leads/${id}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (r.status === 401 && process.env.KOMMO_REFRESH_TOKEN) {
-    await refreshAccessToken(subdomain);
-    return fetchLeadFull(subdomain, id);
+  const base = `https://${subdomain}.kommo.com/api/v4`;
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+  const leadId = encodeURIComponent(String(id).trim());
+
+  let r = await fetch(`${base}/leads/${leadId}`, { headers });
+  if (r.status === 404) {
+    const r2 = await fetch(`${base}/leads?filter[id]=${leadId}`, { headers });
+    if (!r2.ok) throw new Error(`Kommo filter GET failed ${r2.status}`);
+    const data = await r2.json();
+    const lead = data?._embedded?.leads?.[0];
+    if (!lead) throw new Error(`Kommo lead ${id} not found by filter`);
+    return lead;
   }
   if (!r.ok) throw new Error(`Kommo GET lead ${id} failed ${r.status}`);
-  return r.json();
+  return await r.json();
+}
+
+// Si el asesor no está en tu diccionario, intenta leerlo de Kommo
+async function fetchUserName(subdomain, userId) {
+  if (!userId) return null;
+  const token = await getAccessToken(subdomain);
+  const base = `https://${subdomain}.kommo.com/api/v4`;
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+  const uid = encodeURIComponent(String(userId).trim());
+
+  let r = await fetch(`${base}/users/${uid}`, { headers });
+  if (r.status === 404) {
+    const r2 = await fetch(`${base}/users?filter[id]=${uid}`, { headers });
+    if (!r2.ok) return null;
+    const data = await r2.json();
+    return data?._embedded?.users?.[0]?.name || null;
+  }
+  if (!r.ok) return null;
+  const data = await r.json();
+  return data?.name || null;
 }
 
 /* ================= Endpoints existentes ================= */
@@ -244,6 +288,7 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
 
 /* ============== NUEVO: /kommo/translate con enriquecimiento ============== */
 const CF_IDS = { Campania: "1289547", Tipo: "1017119", CotChina: "1290102" };
+
 app.post("/kommo/translate", async (req, res) => {
   try {
     // Debug opcional: ver exactamente lo recibido
@@ -254,55 +299,69 @@ app.post("/kommo/translate", async (req, res) => {
     const payload = req.body || {};
     const leadsIn = pickLeads(payload);
     const accountIn = pickAccount(payload) || {};
-    const subdomain = accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "gruporegalado";
+    const subdomain = (accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "").trim();
 
     const outLeads = [];
     for (const l of leadsIn) {
       let lead = { ...l };
 
-      // Si faltan campos críticos, enriquece con Kommo
-      const needsEnrich = !(lead?.responsible_user_id && Array.isArray(lead?.custom_fields));
-      if (needsEnrich && lead?.id) {
+      // Si faltan campos críticos, enriquece desde Kommo
+      const missingCFs = !(lead?.custom_fields) && !(lead?.custom_fields_values);
+      const needsEnrich = !(lead?.responsible_user_id) || missingCFs;
+      if (needsEnrich && lead?.id && subdomain) {
         try {
           const full = await fetchLeadFull(subdomain, lead.id);
-          // La API de Kommo /leads/{id} devuelve el lead plano
-          // Mezclamos sin pisar lo ya presente
-          lead = { ...lead, ...full };
+          // Merge conservando id/status/pipeline del webhook si venían
+          lead = { ...full, ...lead, id: full.id || lead.id, status_id: lead.status_id || full.status_id, pipeline_id: lead.pipeline_id || full.pipeline_id };
         } catch (e) {
           console.warn("Enrichment failed for lead", l.id, e.message);
         }
       }
 
       const status_id = toStr(lead.status_id);
-      const pipeline_id = toStr(lead.pipeline_id);
       const responsible_user_id = toStr(lead.responsible_user_id);
-      const custom_fields = lead.custom_fields;
 
+      // Normaliza CFs a la forma {id, values}
+      const custom_fields = normalizeCFs(lead);
+
+      // CFs
       const Campania_Id = toStr(getCF(custom_fields, CF_IDS.Campania));
-      const TipoRaw     = getCF(custom_fields, CF_IDS.Tipo);     // puede venir como ID o texto
+      const TipoRaw     = getCF(custom_fields, CF_IDS.Tipo);     // puede ser ID o texto
       const CotChina_Id = toStr(getCF(custom_fields, CF_IDS.CotChina));
 
-      const Etapa_Legible   = ETAPAS[status_id] || "Etapa desconocida";
-      const Asesor_Nombre   = ASESORES[responsible_user_id] || "No encontrado";
-      const Campania_Nombre = CAMPANAS[Campania_Id] || "Desconocido";
-      const CotChina_Nombre = COT_CHINA[CotChina_Id] || "";
+      // Etapa
+      const Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
 
-      // Tipo flexible: ID o texto
+      // Asesor: diccionario y fallback API users
+      let Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
+      if (Asesor_Nombre === "No encontrado" && subdomain && responsible_user_id) {
+        const fetched = await fetchUserName(subdomain, responsible_user_id);
+        if (fetched) Asesor_Nombre = fetched;
+      }
+
+      // Campaña / Cot China
+      const Campania_Nombre = Campania_Id ? (CAMPANAS[Campania_Id] || "Desconocido") : "Desconocido";
+      const CotChina_Nombre = CotChina_Id ? (COT_CHINA[CotChina_Id] || "") : "";
+
+      // Tipo flexible (ID o texto)
       let Tipo_Id = null, Tipo_Nombre = "Desconocido";
       if (TipoRaw) {
         const isNumeric = !isNaN(Number(TipoRaw));
-        if (isNumeric) { Tipo_Id = String(TipoRaw); Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido"; }
-        else {
+        if (isNumeric) {
+          Tipo_Id = String(TipoRaw);
+          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
+        } else {
           const n = normalize(TipoRaw);
-          if (TIPOS_BY_NAME[n]) { Tipo_Id = TIPOS_BY_NAME[n].id; Tipo_Nombre = TIPOS_BY_NAME[n].nombre; }
-          else { Tipo_Nombre = String(TipoRaw); }
+          if (TIPOS_BY_NAME[n]) {
+            Tipo_Id = TIPOS_BY_NAME[n].id;
+            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+          } else {
+            Tipo_Nombre = String(TipoRaw);
+          }
         }
       }
 
-      // Pipeline → nombre (si agregas un diccionario PIPELINES, mapéalo aquí)
-      const Pipeline_Nombre = null;
-
-      // Opcional: StageName para Salesforce (ajusta a tu picklist)
+      // Opcional: StageName para Salesforce (ajusta a tu picklist real)
       const stageMapSF = {
         "Contacto inicial": "Qualification",
         "DEFINICION DE LISTA": "Prospecting",
@@ -314,13 +373,12 @@ app.post("/kommo/translate", async (req, res) => {
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
       outLeads.push({
-        ...l, // conservamos lo del webhook original
+        ...l, // lo del webhook original
         responsible_user_id,
-        pipeline_id,
-        custom_fields, // tras enriquecimiento si se obtuvo
+        custom_fields,
         mapeo: {
           Etapa_Legible,
-          Pipeline_Nombre,
+          Pipeline_Nombre: null,
           Asesor_Nombre,
           Campania_Id: Campania_Id || null,
           Campania_Nombre,
