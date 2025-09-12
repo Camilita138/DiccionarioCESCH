@@ -5,12 +5,6 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* ============== Fetch helper (soporta Node <18) ============== */
-const doFetch = (...args) =>
-  (globalThis.fetch
-    ? globalThis.fetch(...args)
-    : import("node-fetch").then(({ default: f }) => f(...args)));
-
 /* ================= Helpers ================= */
 const toStr = (v) => (v ?? "").toString();
 const norm = (s) =>
@@ -38,7 +32,10 @@ const normalizeCFs = (lead) => {
 // Devuelve el primer valor y enum info de un CF
 const cfFirst = (cf) => {
   const v = cf?.values?.[0] || {};
-  return { value: v.value ?? null, enum_id: v.enum_id ?? null };
+  return {
+    value: v.value ?? null,
+    enum_id: v.enum_id ?? null,
+  };
 };
 
 // Acepta distintas formas del payload
@@ -64,6 +61,9 @@ const keyify = (label) =>
     .split(/\s+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join("_");
+
+// Limpia a solo dígitos (para buscar en SF)
+const cleanDigits = (s) => toStr(s).replace(/\D+/g, "");
 
 /* ================= Diccionarios negocio ================= */
 const CAMPANAS = {
@@ -170,7 +170,8 @@ const ASESORES = {
 };
 
 /* ================= Kommo auth & fetch ================= */
-let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
+let ACCESS_TOKEN = null,
+  ACCESS_TOKEN_EXP = 0;
 
 async function getAccessToken(subdomain) {
   if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // sin "Bearer"
@@ -189,7 +190,7 @@ async function refreshAccessToken(subdomain) {
     refresh_token: process.env.KOMMO_REFRESH_TOKEN,
     redirect_uri: process.env.KOMMO_REDIRECT_URI,
   };
-  const r = await doFetch(url, {
+  const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -201,15 +202,16 @@ async function refreshAccessToken(subdomain) {
   return ACCESS_TOKEN;
 }
 
+// GET lead con contactos
 async function fetchLeadFull(subdomain, id) {
   const token = await getAccessToken(subdomain);
   const base = `https://${subdomain}.kommo.com/api/v4`;
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   const leadId = encodeURIComponent(String(id).trim());
 
-  let r = await doFetch(`${base}/leads/${leadId}`, { headers });
+  let r = await fetch(`${base}/leads/${leadId}?with=contacts`, { headers });
   if (r.status === 404) {
-    const r2 = await doFetch(`${base}/leads?filter[id]=${leadId}`, { headers });
+    const r2 = await fetch(`${base}/leads?with=contacts&filter[id]=${leadId}`, { headers });
     if (!r2.ok) throw new Error(`Kommo filter GET failed ${r2.status}`);
     const data = await r2.json();
     const lead = data?._embedded?.leads?.[0];
@@ -226,10 +228,9 @@ async function fetchUserName(subdomain, userId) {
   const base = `https://${subdomain}.kommo.com/api/v4`;
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   const uid = encodeURIComponent(String(userId).trim());
-
-  let r = await doFetch(`${base}/users/${uid}`, { headers });
+  let r = await fetch(`${base}/users/${uid}`, { headers });
   if (r.status === 404) {
-    const r2 = await doFetch(`${base}/users?filter[id]=${uid}`, { headers });
+    const r2 = await fetch(`${base}/users?filter[id]=${uid}`, { headers });
     if (!r2.ok) return null;
     const data = await r2.json();
     return data?._embedded?.users?.[0]?.name || null;
@@ -237,6 +238,33 @@ async function fetchUserName(subdomain, userId) {
   if (!r.ok) return null;
   const data = await r.json();
   return data?.name || null;
+}
+
+// Contactos por IDs
+async function fetchContactsByIds(subdomain, ids) {
+  if (!ids?.length) return [];
+  const token = await getAccessToken(subdomain);
+  const base = `https://${subdomain}.kommo.com/api/v4`;
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+  const idList = ids.join(",");
+  const r = await fetch(`${base}/contacts?filter[id]=${encodeURIComponent(idList)}`, { headers });
+  if (!r.ok) throw new Error(`Kommo GET contacts failed ${r.status}`);
+  const data = await r.json();
+  return data?._embedded?.contacts || [];
+}
+
+function extractPhonesEmailsFromContact(contact) {
+  const out = { phones: [], emails: [] };
+  const arr = contact?.custom_fields_values || [];
+  for (const cf of arr) {
+    if (cf.field_code === "PHONE") {
+      for (const v of (cf.values || [])) if (v?.value) out.phones.push(toStr(v.value));
+    }
+    if (cf.field_code === "EMAIL") {
+      for (const v of (cf.values || [])) if (v?.value) out.emails.push(toStr(v.value));
+    }
+  }
+  return out;
 }
 
 /* ====== Definiciones de CF (para traducir enum_id → label) ====== */
@@ -251,22 +279,18 @@ async function ensureLeadFieldDefs(subdomain, getTokenFn) {
   const headers = { Authorization: `Bearer ${token}` };
   let page = 1;
   const byId = {}, byType = {}, byLabel = {};
-
   while (true) {
     const url = `https://${subdomain}.kommo.com/api/v4/leads/custom_fields?page=${page}`;
-    const r = await doFetch(url, { headers });
+    const r = await fetch(url, { headers });
     if (!r.ok) throw new Error(`GET custom_fields ${r.status}`);
     const data = await r.json();
     const items = data?._embedded?.custom_fields || [];
-
     for (const f of items) {
       byType[String(f.id)] = f.type;
       byLabel[String(f.id)] = f.name;
       if (Array.isArray(f.enums)) {
         byId[String(f.id)] = {};
-        for (const e of f.enums) {
-          byId[String(f.id)][String(e.id)] = e.value;
-        }
+        for (const e of f.enums) byId[String(f.id)][String(e.id)] = e.value;
       }
     }
     if (data?._links?.next?.href) page += 1;
@@ -303,10 +327,8 @@ app.post("/mapear", (req, res) => {
   const inAsesorId = toStr(input.asesor_id);
   const inAsesorTexto = toStr(input.asesor_texto);
   let asesorId = null, asesorNombre = "No encontrado";
-  if (ASESORES[inAsesorId]) {
-    asesorId = inAsesorId;
-    asesorNombre = ASESORES[inAsesorId];
-  } else {
+  if (ASESORES[inAsesorId]) { asesorId = inAsesorId; asesorNombre = ASESORES[inAsesorId]; }
+  else {
     const found = firstIdInFreeText(inAsesorTexto, ASESORES);
     if (found) { asesorId = found; asesorNombre = ASESORES[found]; }
   }
@@ -328,11 +350,7 @@ app.post("/mapear", (req, res) => {
 });
 
 const DICCIONARIOS = {
-  campanas: CAMPANAS,
-  cot_china: COT_CHINA,
-  etapas: ETAPAS,
-  tipos: TIPOS_BY_ID,
-  asesores: ASESORES,
+  campanas: CAMPANAS, cot_china: COT_CHINA, etapas: ETAPAS, tipos: TIPOS_BY_ID, asesores: ASESORES,
 };
 app.get("/lookup/:diccionario/:id", (req, res) => {
   const dic = DICCIONARIOS[req.params.diccionario.toLowerCase()];
@@ -342,7 +360,7 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id: req.params.id, nombre: val });
 });
 
-/* ================= /kommo/translate (TODOS los CF) ================= */
+/* ================= /kommo/translate (incluye TELÉFONO DE CONTACTO) ================= */
 app.post("/kommo/translate", async (req, res) => {
   try {
     if (req.query.debug === "1") {
@@ -367,7 +385,7 @@ app.post("/kommo/translate", async (req, res) => {
 
       // enriquecer si faltan datos clave
       const missingCFs = !lead?.custom_fields && !lead?.custom_fields_values;
-      const needsEnrich = !(lead?.responsible_user_id) || missingCFs;
+      const needsEnrich = !(lead?.responsible_user_id) || missingCFs || !lead?._embedded?.contacts;
       if (needsEnrich && lead?.id && subdomain) {
         try {
           const full = await fetchLeadFull(subdomain, lead.id);
@@ -395,6 +413,36 @@ app.post("/kommo/translate", async (req, res) => {
         if (fetched) Asesor_Nombre = fetched;
       }
 
+      // === Contacto principal: teléfonos / emails ===
+      let Telefono_Principal = "";
+      let Telefono_Principal_Clean = "";
+      let Telefonos = [];
+      let Email_Principal = "";
+      let Contacto_Nombre = "";
+      let Contacto_Id = null;
+
+      try {
+        const links = lead?._embedded?.contacts || [];
+        const contactIds = links.map(c => c.id).filter(Boolean);
+        const mainId = links.find(c => c.is_main)?.id || contactIds[0];
+
+        if (contactIds.length && subdomain) {
+          const contacts = await fetchContactsByIds(subdomain, contactIds);
+          const main = contacts.find(c => String(c.id) === String(mainId)) || contacts[0];
+          if (main) {
+            const { phones, emails } = extractPhonesEmailsFromContact(main);
+            Telefonos = phones;
+            Telefono_Principal = phones[0] || "";
+            Telefono_Principal_Clean = cleanDigits(Telefono_Principal);
+            Email_Principal = emails[0] || "";
+            Contacto_Nombre = main.name || "";
+            Contacto_Id = main.id || null;
+          }
+        }
+      } catch (e) {
+        console.warn("Contacts enrich failed for lead", l.id, e.message);
+      }
+
       // Construimos salida “bonita” para TODOS los CF
       const fields_pretty = [];
       const mapeoCampos = {};
@@ -415,8 +463,7 @@ app.post("/kommo/translate", async (req, res) => {
           const enumName = enum_id ? defs?.byId?.[fieldId]?.[String(enum_id)] || null : null;
 
           fields_pretty.push({
-            field_id: fieldId, name: fieldLabel, type: fieldType,
-            value, enum_id, enum_name: enumName,
+            field_id: fieldId, name: fieldLabel, type: fieldType, value, enum_id, enum_name: enumName,
           });
 
           mapeoCampos[`${key}_Id`] = enum_id ?? null;
@@ -430,17 +477,14 @@ app.post("/kommo/translate", async (req, res) => {
 
           fields_pretty.push({
             field_id: fieldId, name: fieldLabel, type: fieldType,
-            enum_ids: enumIds, enum_names: enumNames,
-            value: rawValues[0] ?? null,
+            enum_ids: enumIds, enum_names: enumNames, value: rawValues[0] ?? null,
           });
 
           mapeoCampos[`${key}_Ids`] = enumIds;
           mapeoCampos[`${key}_Nombres`] = enumNames;
         } else {
           const value = rawValues.length > 1 ? rawValues : rawValues[0] ?? "";
-          fields_pretty.push({
-            field_id: fieldId, name: fieldLabel, type: fieldType || "text", value,
-          });
+          fields_pretty.push({ field_id: fieldId, name: fieldLabel, type: fieldType || "text", value });
           mapeoCampos[key] = value;
         }
       }
@@ -455,8 +499,12 @@ app.post("/kommo/translate", async (req, res) => {
           Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
         } else {
           const n = norm(maybeTipo);
-          if (TIPOS_BY_NAME[n]) { Tipo_Id = TIPOS_BY_NAME[n].id; Tipo_Nombre = TIPOS_BY_NAME[n].nombre; }
-          else { Tipo_Nombre = String(maybeTipo); }
+          if (TIPOS_BY_NAME[n]) {
+            Tipo_Id = TIPOS_BY_NAME[n].id;
+            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+          } else {
+            Tipo_Nombre = String(maybeTipo);
+          }
         }
       }
 
@@ -470,17 +518,32 @@ app.post("/kommo/translate", async (req, res) => {
       };
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
+      // Opcional: reflejar teléfono/email también en fields_pretty
+      fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
+      fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
+
       outLeads.push({
         ...l,
         responsible_user_id,
         custom_fields,
-        fields_pretty, // ← TODOS los campos con su field_id y nombres
+        fields_pretty, // TODOS los CF con sus ids y labels
         mapeo: {
           Etapa_Legible,
           Asesor_Nombre,
           StageName_SF,
-          Tipo_Id, Tipo_Nombre,
-          ...mapeoCampos, // ← claves “bonitas” para usar directo
+          Tipo_Id,
+          Tipo_Nombre,
+
+          // Contacto principal
+          Contacto_Id,
+          Contacto_Nombre,
+          Telefono: Telefono_Principal,
+          Telefono_Clean: Telefono_Principal_Clean,
+          Telefonos,
+          Email_Principal,
+
+          // Máscaras “bonitas” de todos los CF
+          ...mapeoCampos,
         },
       });
     }
@@ -488,56 +551,6 @@ app.post("/kommo/translate", async (req, res) => {
     res.json({ ok: true, leads: outLeads, account: accountIn });
   } catch (err) {
     console.error("Error /kommo/translate:", err);
-    res.status(500).json({ ok: false, error: "Error interno" });
-  }
-});
-
-/* ============== /utils/prepare (teléfono + nombre) ============== */
-app.post("/utils/prepare", (req, res) => {
-  try {
-    const raw = toStr(req.body.raw_number).trim();
-    const full = toStr(req.body.full_name).trim();
-
-    // Teléfono Ecuador: busca primer match y normaliza a 0XXXXXXXXX
-    let numero = null;
-    const re = /(?:(?:\+593|593)\s*)?0?\d{9}/;
-    for (const p of raw.split(",")) {
-      const m = toStr(p).trim().match(re);
-      if (m) { numero = m[0]; break; }
-    }
-    let cleaned = "";
-    if (numero) {
-      cleaned = numero.replace(/\s+/g, "");
-      cleaned = cleaned.replace(/^\+?5930?/, "0"); // +593… / 593… → 0…
-    }
-    const number_length = cleaned.length;
-
-    // Nombre: si viene con "_" lo tratamos como persona (FIRST_LAST)
-    let normalized_name = "";
-    let short_name = "NC";
-    if (full) {
-      if (full.includes("_")) {
-        const parts = full.replace(/_/g, " ").trim().split(/\s+/);
-        const first = parts[0] || "";
-        const last  = parts.length > 1 ? parts[parts.length - 1] : "";
-        normalized_name = `${last} ${first}`.trim().toUpperCase();
-        short_name = (last && first) ? (last[0] + first[0]).toUpperCase() : "NC";
-      } else {
-        // Empresa: respétalo (solo lo pasamos a mayúsculas para normalized_name)
-        normalized_name = full.toUpperCase();
-        short_name = "NC";
-      }
-    }
-
-    res.json({
-      ok: true,
-      cleaned_number: cleaned,
-      number_length,
-      normalized_name,
-      short_name
-    });
-  } catch (e) {
-    console.error("Error /utils/prepare:", e);
     res.status(500).json({ ok: false, error: "Error interno" });
   }
 });
