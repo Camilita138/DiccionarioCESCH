@@ -62,8 +62,30 @@ const keyify = (label) =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join("_");
 
-// Limpia a solo dígitos (para buscar en SF)
+// Limpia a solo dígitos
 const cleanDigits = (s) => toStr(s).replace(/\D+/g, "");
+
+// === Limpieza de celular Ecuador a formato 09******** ===
+function cleanEcPhone(raw) {
+  if (!raw) return "";
+  const s = String(raw);
+
+  // Busca un candidato (prefijo opcional +593/593/0 y luego 9 + 8 dígitos)
+  let m = s.match(/(?:\+?593|593|0)?\s*9\d{8}/);
+  if (!m) {
+    // Si viene con comas, prueba cada parte
+    for (const p of s.split(",").map((x) => x.trim())) {
+      m = p.match(/(?:\+?593|593|0)?\s*9\d{8}/);
+      if (m) break;
+    }
+  }
+  if (!m) return "";
+
+  let d = m[0].replace(/\D/g, ""); // solo dígitos
+  if (d.startsWith("593")) d = d.slice(3);
+  if (!d.startsWith("0")) d = "0" + d;
+  return d.slice(0, 10); // 10 dígitos
+}
 
 /* ================= Diccionarios negocio ================= */
 const CAMPANAS = {
@@ -360,7 +382,7 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id: req.params.id, nombre: val });
 });
 
-/* ================= /kommo/translate (incluye TELÉFONO DE CONTACTO) ================= */
+/* ============== /kommo/translate (incluye TELÉFONO LIMPIO 09********) ============== */
 app.post("/kommo/translate", async (req, res) => {
   try {
     if (req.query.debug === "1") {
@@ -417,6 +439,7 @@ app.post("/kommo/translate", async (req, res) => {
       let Telefono_Principal = "";
       let Telefono_Principal_Clean = "";
       let Telefonos = [];
+      let Telefonos_Clean = [];
       let Email_Principal = "";
       let Contacto_Nombre = "";
       let Contacto_Id = null;
@@ -432,8 +455,9 @@ app.post("/kommo/translate", async (req, res) => {
           if (main) {
             const { phones, emails } = extractPhonesEmailsFromContact(main);
             Telefonos = phones;
+            Telefonos_Clean = phones.map(cleanEcPhone).filter(Boolean);
             Telefono_Principal = phones[0] || "";
-            Telefono_Principal_Clean = cleanDigits(Telefono_Principal);
+            Telefono_Principal_Clean = cleanEcPhone(Telefono_Principal);
             Email_Principal = emails[0] || "";
             Contacto_Nombre = main.name || "";
             Contacto_Id = main.id || null;
@@ -518,7 +542,7 @@ app.post("/kommo/translate", async (req, res) => {
       };
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
-      // Opcional: reflejar teléfono/email también en fields_pretty
+      // También reflejamos PHONE/EMAIL como “system” en fields_pretty
       fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
       fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
@@ -538,8 +562,9 @@ app.post("/kommo/translate", async (req, res) => {
           Contacto_Id,
           Contacto_Nombre,
           Telefono: Telefono_Principal,
-          Telefono_Clean: Telefono_Principal_Clean,
+          Telefono_Clean: Telefono_Principal_Clean, // ← 09********
           Telefonos,
+          Telefonos_Clean,                           // ← array de 09********
           Email_Principal,
 
           // Máscaras “bonitas” de todos los CF
