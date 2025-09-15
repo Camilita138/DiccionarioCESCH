@@ -95,7 +95,8 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
   const d = String(localNow.getDate()).padStart(2, "0");
 
   return {
-    iso: `${y}-${m}-${d}`,  // YYYY-MM-DD (CloseDate en Salesforce)
+    iso: `${y}-${m}-${d}`,   // YYYY-MM-DD (CloseDate en Salesforce)
+    us: `${m}/${d}/${y}`,   // MM/DD/YYYY (si lo necesitas en algún lado)
   };
 }
 /** ===================================================================== **/
@@ -222,7 +223,6 @@ const VENDEDOR_SF = (() => {
     "veyda pinela": "Veyda",
     "alibox": "Alibox",
   };
-  // normaliza claves para acceso por norm()
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
 
@@ -466,8 +466,8 @@ app.post("/kommo/translate", async (req, res) => {
       const responsible_user_id = toStr(lead.responsible_user_id);
       const custom_fields = normalizeCFs(lead);
 
-      // Etapa + Asesor
-      const Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
+      // Etapa + Asesor (por responsible_user_id; si no, luego usamos CF)
+      let Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
       let Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
       if (Asesor_Nombre === "No encontrado" && subdomain && responsible_user_id) {
         const fetched = await fetchUserName(subdomain, responsible_user_id);
@@ -552,7 +552,7 @@ app.post("/kommo/translate", async (req, res) => {
         }
       }
 
-      // Tipo (flexible por si viene en texto/ID)
+      // Resolver Tipo (ID o texto)
       let Tipo_Id = null, Tipo_Nombre = "Desconocido";
       const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
       if (maybeTipo) {
@@ -581,15 +581,22 @@ app.post("/kommo/translate", async (req, res) => {
       };
       const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
-      // === Vendedor SF calculado a partir del Asesor_Nombre ===
-      const vendedor_kommo_raw = mapeoCampos["Vendedor"] ?? null; // si existe CF "Vendedor" en Kommo
-      let Vendedor = null;
-      if (Asesor_Nombre && Asesor_Nombre !== "No encontrado") {
-        Vendedor = VENDEDOR_SF[norm(Asesor_Nombre)] || Asesor_Nombre.split(" ")[0];
+      // --- Elegir mejor fuente para Asesor y calcular Vendedor SF ---
+      const asesorPorResp = Asesor_Nombre;
+      const asesorPorCF   = toStr(mapeoCampos.Asesor_Nombre || mapeoCampos.Asesor_Value || "");
+      const mapsResp = !!VENDEDOR_SF[norm(asesorPorResp)];
+      const mapsCF   = !!VENDEDOR_SF[norm(asesorPorCF)];
+
+      let asesorBueno = asesorPorResp;
+      if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
+        asesorBueno = asesorPorCF;
       }
+      const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || ""; // si no hay match, lo dejamos vacío
+      const Vendedor_Kommo = asesorBueno;
 
       // También reflejamos PHONE/EMAIL como “system” en fields_pretty
       fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
+      fields_prety = fields_pretty; // keep reference for potential uses
       fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
       // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego nuestros calculados
@@ -604,9 +611,9 @@ app.post("/kommo/translate", async (req, res) => {
 
           // 2) Nuestros campos calculados que NO deben ser pisados:
           Etapa_Legible,
-          Asesor_Nombre,
-          Vendedor,                 // ← corto para Salesforce (Denisse, Sami, etc.)
-          Vendedor_Kommo: vendedor_kommo_raw, // ← si Kommo trae su propio "Vendedor"
+          Asesor_Nombre: asesorBueno,
+          Vendedor,                     // ← corto para Salesforce
+          Vendedor_Kommo,               // ← texto que usamos para derivar Vendedor
           StageName_SF,
           Tipo_Id,
           Tipo_Nombre,
@@ -622,6 +629,7 @@ app.post("/kommo/translate", async (req, res) => {
 
           // Fecha de cierre calculada por la API
           Fecha_Cierre_ISO: closeCalc.iso,   // YYYY-MM-DD para CloseDate
+          Fecha_Cierre_MDY: closeCalc.us,    // MM/DD/YYYY por si hace falta
         },
       });
     }
