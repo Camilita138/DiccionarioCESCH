@@ -32,10 +32,7 @@ const normalizeCFs = (lead) => {
 // Devuelve el primer valor y enum info de un CF
 const cfFirst = (cf) => {
   const v = cf?.values?.[0] || {};
-  return {
-    value: v.value ?? null,
-    enum_id: v.enum_id ?? null,
-  };
+  return { value: v.value ?? null, enum_id: v.enum_id ?? null };
 };
 
 // Acepta distintas formas del payload
@@ -86,6 +83,23 @@ function cleanEcPhone(raw) {
   if (!d.startsWith("0")) d = "0" + d;
   return d.slice(0, 10); // 10 dígitos
 }
+
+/** ====== FECHA DE CIERRE: sumar días con zona horaria y formatear ====== **/
+function addDaysTZ(days = 0, tz = "America/Guayaquil") {
+  const now = new Date();
+  const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  localNow.setDate(localNow.getDate() + Number(days || 0));
+
+  const y = localNow.getFullYear();
+  const m = String(localNow.getMonth() + 1).padStart(2, "0");
+  const d = String(localNow.getDate()).padStart(2, "0");
+
+  return {
+    iso: `${y}-${m}-${d}`,  // YYYY-MM-DD (CloseDate en Salesforce)
+    us: `${m}/${d}/${y}`,   // MM/DD/YYYY
+  };
+}
+/** ===================================================================== **/
 
 /* ================= Diccionarios negocio ================= */
 const CAMPANAS = {
@@ -192,8 +206,7 @@ const ASESORES = {
 };
 
 /* ================= Kommo auth & fetch ================= */
-let ACCESS_TOKEN = null,
-  ACCESS_TOKEN_EXP = 0;
+let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
 
 async function getAccessToken(subdomain) {
   if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // sin "Bearer"
@@ -382,7 +395,7 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id: req.params.id, nombre: val });
 });
 
-/* ============== /kommo/translate (incluye TELÉFONO LIMPIO 09********) ============== */
+/* ============== /kommo/translate (TELÉFONO + FECHA CIERRE) ============== */
 app.post("/kommo/translate", async (req, res) => {
   try {
     if (req.query.debug === "1") {
@@ -400,6 +413,11 @@ app.post("/kommo/translate", async (req, res) => {
       try { defs = await ensureLeadFieldDefs(subdomain, getAccessToken); }
       catch (e) { console.warn("No se pudieron cargar definiciones de CF:", e.message); }
     }
+
+    // Config fecha de cierre (defaults env o query)
+    const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
+    const closeTZ   = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
+    const closeCalc = addDaysTZ(closeDays, closeTZ);
 
     const outLeads = [];
     for (const l of leadsIn) {
@@ -474,7 +492,8 @@ app.post("/kommo/translate", async (req, res) => {
       for (const cf of custom_fields) {
         const fieldId = String(cf.id);
         const fieldType = defs?.byIdType?.[fieldId] || "";
-        const fieldLabel = defs?.byIdLabel?.[fieldId] || `CF_${fieldId}`;
+        theLabel = defs?.byIdLabel?.[fieldId] || `CF_${fieldId}`;
+        const fieldLabel = theLabel;
         const key = keyify(fieldLabel);
 
         const values = Array.isArray(cf.values) ? cf.values : [];
@@ -566,6 +585,10 @@ app.post("/kommo/translate", async (req, res) => {
           Telefonos,
           Telefonos_Clean,                           // ← array de 09********
           Email_Principal,
+
+          // Fecha de cierre calculada por API
+          Fecha_Cierre_ISO: closeCalc.iso,   // YYYY-MM-DD (mapéalo a CloseDate)
+          Fecha_Cierre_MDY: closeCalc.us,    // MM/DD/YYYY (si te sirve)
 
           // Máscaras “bonitas” de todos los CF
           ...mapeoCampos,
