@@ -66,6 +66,7 @@ const cleanDigits = (s) => toStr(s).replace(/\D+/g, "");
 function cleanEcPhone(raw) {
   if (!raw) return "";
   const s = String(raw);
+
   let m = s.match(/(?:\+?593|593|0)?\s*9\d{8}/);
   if (!m) {
     for (const p of s.split(",").map((x) => x.trim())) {
@@ -74,13 +75,15 @@ function cleanEcPhone(raw) {
     }
   }
   if (!m) return "";
+
   let d = m[0].replace(/\D/g, "");
   if (d.startsWith("593")) d = d.slice(3);
   if (!d.startsWith("0")) d = "0" + d;
   return d.slice(0, 10);
 }
 
-/** ====== FECHA DE CIERRE: sumar días con zona horaria y formatear ====== **/
+/** ====== FECHAS con TZ ====== **/
+// Sumar días (para fecha de cierre) y devolver formatos y partes
 function addDaysTZ(days = 0, tz = "America/Guayaquil") {
   const now = new Date();
   const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
@@ -89,13 +92,22 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
   const y = localNow.getFullYear();
   const m = String(localNow.getMonth() + 1).padStart(2, "0");
   const d = String(localNow.getDate()).padStart(2, "0");
+  const yy = String(y).slice(-2);
 
   return {
-    iso: `${y}-${m}-${d}`, // YYYY-MM-DD (CloseDate en Salesforce)
-    us: `${m}/${d}/${y}`, // MM/DD/YYYY
+    iso: `${y}-${m}-${d}`,     // YYYY-MM-DD
+    us:  `${m}/${d}/${y}`,     // MM/DD/YYYY
+    parts: { day: d, month: m, year2: yy, year4: String(y) },
+    dmY_dots:  `${d}.${m}.${yy}`, // 23.09.25
+    dmY_slash: `${d}/${m}/${yy}`, // 23/09/25
   };
 }
-/** ===================================================================== **/
+
+// Fecha de HOY (sin sumar días), en la misma forma
+function todayTZ(tz = "America/Guayaquil") {
+  return addDaysTZ(0, tz);
+}
+/** ======================================= **/
 
 /* ================= Diccionarios negocio ================= */
 const CAMPANAS = {
@@ -174,7 +186,7 @@ const TIPOS_BY_NAME = Object.fromEntries(
   Object.entries(TIPOS_BY_ID).map(([id, nombre]) => [norm(nombre), { id, nombre }])
 );
 
-/* ==== ASESORES (Kommo) por ID → Nombre (como ya tenías) ==== */
+/* ==== ASESORES (Kommo) por ID → Nombre ==== */
 const ASESORES = {
   "1277529": "Denisse de la Cruz",
   "1277511": "Sami Cachiguango",
@@ -203,7 +215,7 @@ const ASESORES = {
   "1291073": "Veyda Pinela",
 };
 
-/* === Mapa Kommo → Vendedor (Salesforce “corto”) === */
+/* === Kommo → Vendedor (Salesforce “corto”) === */
 const VENDEDOR_SF = (() => {
   const base = {
     "denisse de la cruz": "Denisse",
@@ -224,7 +236,7 @@ const VENDEDOR_SF = (() => {
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
 
-/* === NUEVO: códigos oficiales por NOMBRE KOMMO (tu tabla) === */
+/* === Códigos oficiales por nombre Kommo === */
 const ASESORES_KOMMO_CODE = {
   "Denisse de la Cruz": "01",
   "Sami Cachiguango": "11",
@@ -239,33 +251,28 @@ const ASESORES_KOMMO_CODE = {
   "Damaris Ñacato": "14",
   "Veyda Pinela": "15",
 };
-// versión normalizada para matches robustos
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
 );
-
-// por vendedor “corto” → código (congruente con lo de arriba)
 const VENDEDOR_SHORT_TO_CODE = {
-  "Denisse": "01",
-  "Sami": "11",
-  "Daniel": "06",
-  "Marly": "04",
-  "Margarita": "02",
-  "Pablo": "10",
-  "Gabriela": "03",
-  "Ivis": "13",
-  "Jhonny": "09",
-  "Alibox": "07",
-  "Damaris": "14",
-  "Veyda": "15",
+  Denisse: "01",
+  Sami: "11",
+  Daniel: "06",
+  Marly: "04",
+  Margarita: "02",
+  Pablo: "10",
+  Gabriela: "03",
+  Ivis: "13",
+  Jhonny: "09",
+  Alibox: "07",
+  Damaris: "14",
+  Veyda: "15",
 };
-
-function resolveAsesorCodigo(asesorBueno, vendedorCorto) {
-  const byShort = VENDEDOR_SHORT_TO_CODE[vendedorCorto || ""];
-  if (byShort) return byShort;
-  const byLong = ASESORES_KOMMO_CODE_NORM[norm(asesorBueno || "")];
-  if (byLong) return byLong;
-  // fallback
+function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
+  if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
+  const n = norm(asesorLargo || "");
+  if (ASESORES_KOMMO_CODE_NORM[n]) return ASESORES_KOMMO_CODE_NORM[n];
+  if (n.includes("no asignado")) return "05";
   return "00";
 }
 
@@ -459,7 +466,7 @@ app.get("/lookup/:diccionario/:id", (req, res) => {
   res.json({ id: req.params.id, nombre: val });
 });
 
-/* ============== /kommo/translate (TELÉFONO + FECHA CIERRE + VENDEDOR SF) ============== */
+/* ============== /kommo/translate ============== */
 app.post("/kommo/translate", async (req, res) => {
   try {
     if (req.query.debug === "1") {
@@ -478,10 +485,12 @@ app.post("/kommo/translate", async (req, res) => {
       catch (e) { console.warn("No se pudieron cargar definiciones de CF:", e.message); }
     }
 
-    // Config fecha de cierre
+    // Config TZ y fecha de cierre
     const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
-    const closeTZ   = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
-    const closeCalc = addDaysTZ(closeDays, closeTZ);
+    const tz        = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
+
+    const closeCalc = addDaysTZ(closeDays, tz);
+    const todayCalc = todayTZ(tz); // ← HOY
 
     const outLeads = [];
     for (const l of leadsIn) {
@@ -637,14 +646,13 @@ app.post("/kommo/translate", async (req, res) => {
       const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
       const Vendedor_Kommo = asesorBueno;
 
-      // NUEVO: código del asesor (01..15)
       const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
 
       // También reflejamos PHONE/EMAIL como “system” en fields_pretty
       fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
       fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
-      // Salida final por lead
+      // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego calculados
       outLeads.push({
         ...l,
         responsible_user_id,
@@ -657,9 +665,9 @@ app.post("/kommo/translate", async (req, res) => {
           // 2) Calculados
           Etapa_Legible,
           Asesor_Nombre: asesorBueno,
-          Vendedor,                // corto para SF
-          Vendedor_Kommo,          // texto Kommo
-          Asesor_Codigo,           // ← NUEVO campo
+          Vendedor,
+          Vendedor_Kommo,
+          Asesor_Codigo,
           StageName_SF,
           Tipo_Id,
           Tipo_Nombre,
@@ -673,9 +681,19 @@ app.post("/kommo/translate", async (req, res) => {
           Telefonos_Clean,
           Email_Principal,
 
-          // Fecha de cierre calculada por la API
+          // Fecha de cierre (como ya tenías)
           Fecha_Cierre_ISO: closeCalc.iso,
           Fecha_Cierre_MDY: closeCalc.us,
+
+          // === NUEVOS: Fecha de HOY (día actual)
+          Hoy_ISO:   todayCalc.iso,                 // "YYYY-MM-DD"
+          Hoy_MDY:   todayCalc.us,                  // "MM/DD/YYYY"
+          Hoy_Dia:   todayCalc.parts.day,           // "23"
+          Hoy_Mes:   todayCalc.parts.month,         // "09"
+          Hoy_Anio2: todayCalc.parts.year2,         // "25"
+          Hoy_Anio4: todayCalc.parts.year4,         // "2025"
+          Hoy_Dot:   todayCalc.dmY_dots,            // "DD.MM.YY"
+          Hoy_Slash: todayCalc.dmY_slash,           // "DD/MM/YY"
         },
       });
     }
