@@ -66,22 +66,18 @@ const cleanDigits = (s) => toStr(s).replace(/\D+/g, "");
 function cleanEcPhone(raw) {
   if (!raw) return "";
   const s = String(raw);
-
-  // Busca un candidato (prefijo opcional +593/593/0 y luego 9 + 8 dígitos)
   let m = s.match(/(?:\+?593|593|0)?\s*9\d{8}/);
   if (!m) {
-    // Si viene con comas, prueba cada parte
     for (const p of s.split(",").map((x) => x.trim())) {
       m = p.match(/(?:\+?593|593|0)?\s*9\d{8}/);
       if (m) break;
     }
   }
   if (!m) return "";
-
-  let d = m[0].replace(/\D/g, ""); // solo dígitos
+  let d = m[0].replace(/\D/g, "");
   if (d.startsWith("593")) d = d.slice(3);
   if (!d.startsWith("0")) d = "0" + d;
-  return d.slice(0, 10); // 10 dígitos
+  return d.slice(0, 10);
 }
 
 /** ====== FECHA DE CIERRE: sumar días con zona horaria y formatear ====== **/
@@ -95,8 +91,8 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
   const d = String(localNow.getDate()).padStart(2, "0");
 
   return {
-    iso: `${y}-${m}-${d}`,   // YYYY-MM-DD (CloseDate en Salesforce)
-    us: `${m}/${d}/${y}`,   // MM/DD/YYYY (si lo necesitas en algún lado)
+    iso: `${y}-${m}-${d}`, // YYYY-MM-DD (CloseDate en Salesforce)
+    us: `${m}/${d}/${y}`, // MM/DD/YYYY
   };
 }
 /** ===================================================================== **/
@@ -177,6 +173,8 @@ const TIPOS_BY_ID = {
 const TIPOS_BY_NAME = Object.fromEntries(
   Object.entries(TIPOS_BY_ID).map(([id, nombre]) => [norm(nombre), { id, nombre }])
 );
+
+/* ==== ASESORES (Kommo) por ID → Nombre (como ya tenías) ==== */
 const ASESORES = {
   "1277529": "Denisse de la Cruz",
   "1277511": "Sami Cachiguango",
@@ -225,6 +223,51 @@ const VENDEDOR_SF = (() => {
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
+
+/* === NUEVO: códigos oficiales por NOMBRE KOMMO (tu tabla) === */
+const ASESORES_KOMMO_CODE = {
+  "Denisse de la Cruz": "01",
+  "Sami Cachiguango": "11",
+  "Daniel Benitez": "06",
+  "Marly Moran": "04",
+  "Margarita Carpio": "02",
+  "Pablo Jara": "10",
+  "Gabriela Nuñez": "03",
+  "Ivis Anchundia": "13",
+  "Jhonny López": "09",
+  "Alibox": "07",
+  "Damaris Ñacato": "14",
+  "Veyda Pinela": "15",
+};
+// versión normalizada para matches robustos
+const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
+  Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
+);
+
+// por vendedor “corto” → código (congruente con lo de arriba)
+const VENDEDOR_SHORT_TO_CODE = {
+  "Denisse": "01",
+  "Sami": "11",
+  "Daniel": "06",
+  "Marly": "04",
+  "Margarita": "02",
+  "Pablo": "10",
+  "Gabriela": "03",
+  "Ivis": "13",
+  "Jhonny": "09",
+  "Alibox": "07",
+  "Damaris": "14",
+  "Veyda": "15",
+};
+
+function resolveAsesorCodigo(asesorBueno, vendedorCorto) {
+  const byShort = VENDEDOR_SHORT_TO_CODE[vendedorCorto || ""];
+  if (byShort) return byShort;
+  const byLong = ASESORES_KOMMO_CODE_NORM[norm(asesorBueno || "")];
+  if (byLong) return byLong;
+  // fallback
+  return "00";
+}
 
 /* ================= Kommo auth & fetch ================= */
 let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
@@ -435,7 +478,7 @@ app.post("/kommo/translate", async (req, res) => {
       catch (e) { console.warn("No se pudieron cargar definiciones de CF:", e.message); }
     }
 
-    // Config fecha de cierre (defaults env o query)
+    // Config fecha de cierre
     const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
     const closeTZ   = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
     const closeCalc = addDaysTZ(closeDays, closeTZ);
@@ -591,15 +634,17 @@ app.post("/kommo/translate", async (req, res) => {
       if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
         asesorBueno = asesorPorCF;
       }
-      const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || ""; // si no hay match, lo dejamos vacío
+      const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
       const Vendedor_Kommo = asesorBueno;
+
+      // NUEVO: código del asesor (01..15)
+      const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
 
       // También reflejamos PHONE/EMAIL como “system” en fields_pretty
       fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
-      fields_prety = fields_pretty; // keep reference for potential uses
       fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
-      // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego nuestros calculados
+      // Salida final por lead
       outLeads.push({
         ...l,
         responsible_user_id,
@@ -609,11 +654,12 @@ app.post("/kommo/translate", async (req, res) => {
           // 1) CF "bonitos"
           ...mapeoCampos,
 
-          // 2) Nuestros campos calculados que NO deben ser pisados:
+          // 2) Calculados
           Etapa_Legible,
           Asesor_Nombre: asesorBueno,
-          Vendedor,                     // ← corto para Salesforce
-          Vendedor_Kommo,               // ← texto que usamos para derivar Vendedor
+          Vendedor,                // corto para SF
+          Vendedor_Kommo,          // texto Kommo
+          Asesor_Codigo,           // ← NUEVO campo
           StageName_SF,
           Tipo_Id,
           Tipo_Nombre,
@@ -628,8 +674,8 @@ app.post("/kommo/translate", async (req, res) => {
           Email_Principal,
 
           // Fecha de cierre calculada por la API
-          Fecha_Cierre_ISO: closeCalc.iso,   // YYYY-MM-DD para CloseDate
-          Fecha_Cierre_MDY: closeCalc.us,    // MM/DD/YYYY por si hace falta
+          Fecha_Cierre_ISO: closeCalc.iso,
+          Fecha_Cierre_MDY: closeCalc.us,
         },
       });
     }
