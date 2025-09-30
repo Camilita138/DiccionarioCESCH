@@ -107,6 +107,39 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
 function todayTZ(tz = "America/Guayaquil") {
   return addDaysTZ(0, tz);
 }
+
+/* === NUEVO: extraer Salesforce OppIds desde links === */
+function extractSFIds(mapeoCampos) {
+  const urls = [];
+  const ids = [];
+
+  for (const [key, rawVal] of Object.entries(mapeoCampos)) {
+    if (rawVal === undefined || rawVal === null) continue;
+
+    const lowerKey = key.toLowerCase();
+    // buscamos claves tipo Url_Oportunidad_SF, URL_OP2, etc.
+    if (!(lowerKey.includes("url") && (lowerKey.includes("oportunidad") || lowerKey.includes("op")))) continue;
+
+    const values = Array.isArray(rawVal) ? rawVal : [rawVal];
+    for (const v of values) {
+      if (!v) continue;
+      const link = String(v).trim();
+      if (!link) continue;
+
+      // recolecta URL si parece URL
+      if (/^https?:\/\//i.test(link)) urls.push(link);
+
+      // extrae un posible ID de Salesforce (15 o 18 chars alfanum)
+      // opcionalmente prioriza objetos 006 (Opportunity), pero deja genérico por si guardan el link completo con parámetros
+      const idMatch = link.match(/(?<![A-Za-z0-9])([A-Za-z0-9]{15,18})(?![A-Za-z0-9])/);
+      if (idMatch) ids.push(idMatch[1]);
+    }
+  }
+
+  // quita duplicados
+  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
+  return { urls: uniq(urls), ids: uniq(ids) };
+}
 /** ======================================= **/
 
 /* ================= Diccionarios negocio ================= */
@@ -607,6 +640,9 @@ app.post("/kommo/translate", async (req, res) => {
         }
       }
 
+      // === NUEVO: extraer Opps de SF desde los CF ya normalizados ===
+      const { urls: OppUrls, ids: OppIds } = extractSFIds(mapeoCampos);
+
       // Resolver Tipo (ID o texto)
       let Tipo_Id = null, Tipo_Nombre = "Desconocido";
       const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
@@ -697,6 +733,10 @@ app.post("/kommo/translate", async (req, res) => {
           Hoy_Anio4: todayCalc.parts.year4,         // "2025"
           Hoy_Dot:   todayCalc.dmY_dots,            // "DD.MM.YY"
           Hoy_Slash: todayCalc.dmY_slash,           // "DD/MM/YY"
+
+          // === NUEVOS para cierre en Salesforce ===
+          Oportunidades_SF_Urls: OppUrls,
+          Oportunidades_SF_Ids: OppIds,
         },
       });
     }
