@@ -232,6 +232,7 @@ const VENDEDOR_SF = (() => {
     "araceli gonzales": "Araceli",
     "veyda pinela": "Veyda",
     "alibox": "Alibox",
+    "karina vivas": "Karina"
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -250,6 +251,7 @@ const ASESORES_KOMMO_CODE = {
   "Alibox": "07",
   "Damaris Ñacato": "14",
   "Veyda Pinela": "15",
+  "Karina Vivas": "05",
 };
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
@@ -267,6 +269,7 @@ const VENDEDOR_SHORT_TO_CODE = {
   Alibox: "07",
   Damaris: "14",
   Veyda: "15",
+  Karina: "05",
 };
 function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
