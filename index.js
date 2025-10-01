@@ -474,7 +474,7 @@ async function ensureLossReasons(subdomain, getTokenFn) {
   if (Date.now() - LOSS_CACHE.ts < MAX_AGE && Object.keys(LOSS_CACHE.byId).length) {
     return LOSS_CACHE;
   }
-  const token = await getTokenFn(subdomain);
+  const token = await getAccessToken(subdomain);
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   const url = `https://${subdomain}.kommo.com/api/v4/leads/loss_reasons`;
   const r = await fetch(url, { headers });
@@ -486,6 +486,7 @@ async function ensureLossReasons(subdomain, getTokenFn) {
   LOSS_CACHE = { ts: Date.now(), byId };
   return LOSS_CACHE;
 }
+
 
 
 /* ================= Endpoints “legacy” ================= */
@@ -572,7 +573,7 @@ app.post("/kommo/translate", async (req, res) => {
     if (subdomain) {
       try { lossDefs = await ensureLossReasons(subdomain, getAccessToken); }
       catch (e) { console.warn("No se pudieron cargar razones de pérdida:", e.message); }
-}
+    }
 
     // Config TZ y fecha de cierre
     const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
@@ -694,113 +695,114 @@ app.post("/kommo/translate", async (req, res) => {
       }
 
       // === NUEVO: extraer Opps de SF desde los CF ya normalizados ===
-      const { urls: OppUrls, ids: OppIds } = extractSFIds(mapeoCampos);
+    const { urls: OppUrls, ids: OppIds } = extractSFIds(mapeoCampos);
 
-      // Resolver Tipo (ID o texto)
-      let Tipo_Id = null, Tipo_Nombre = "Desconocido";
-      const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
-      if (maybeTipo) {
-        const isNum = !isNaN(Number(maybeTipo));
-        if (isNum) {
-          Tipo_Id = String(maybeTipo);
-          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
+    // Resolver Tipo (ID o texto)
+    let Tipo_Id = null, Tipo_Nombre = "Desconocido";
+    const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
+    if (maybeTipo) {
+      const isNum = !isNaN(Number(maybeTipo));
+      if (isNum) {
+        Tipo_Id = String(maybeTipo);
+        Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
+      } else {
+        const n = norm(maybeTipo);
+        if (TIPOS_BY_NAME[n]) {
+          Tipo_Id = TIPOS_BY_NAME[n].id;
+          Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
         } else {
-          const n = norm(maybeTipo);
-          if (TIPOS_BY_NAME[n]) {
-            Tipo_Id = TIPOS_BY_NAME[n].id;
-            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
-          } else {
-            Tipo_Nombre = String(maybeTipo);
-          }
+          Tipo_Nombre = String(maybeTipo);
         }
       }
+    }
 
-      const stageMapSF = {
-        "Contacto inicial": "Qualification",
-        "DEFINICION DE LISTA": "Prospecting",
-        "COTIZA EL ASESOR": "Proposal/Price Quote",
-        "COTIZA EL CLIENTE": "Negotiation/Review",
-        LIQUIDADO: "Closed Won",
-        "VENTA CONCRETADA": "Closed Won",
-      };
-      const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
+    const stageMapSF = {
+      "Contacto inicial": "Qualification",
+      "DEFINICION DE LISTA": "Prospecting",
+      "COTIZA EL ASESOR": "Proposal/Price Quote",
+      "COTIZA EL CLIENTE": "Negotiation/Review",
+      LIQUIDADO: "Closed Won",
+      "VENTA CONCRETADA": "Closed Won",
+    };
+    const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
-      // --- Elegir mejor fuente para Asesor y calcular Vendedor SF ---
-      const asesorPorResp = Asesor_Nombre;
-      const asesorPorCF   = toStr(mapeoCampos.Asesor_Nombre || mapeoCampos.Asesor_Value || "");
-      const mapsResp = !!VENDEDOR_SF[norm(asesorPorResp)];
-      const mapsCF   = !!VENDEDOR_SF[norm(asesorPorCF)];
+    // --- Elegir mejor fuente para Asesor y calcular Vendedor SF ---
+    const asesorPorResp = Asesor_Nombre;
+    const asesorPorCF   = toStr(mapeoCampos.Asesor_Nombre || mapeoCampos.Asesor_Value || "");
+    const mapsResp = !!VENDEDOR_SF[norm(asesorPorResp)];
+    const mapsCF   = !!VENDEDOR_SF[norm(asesorPorCF)];
 
-      let asesorBueno = asesorPorResp;
-      if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
-        asesorBueno = asesorPorCF;
-      }
-      const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
-      const Vendedor_Kommo = asesorBueno;
+    let asesorBueno = asesorPorResp;
+    if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
+      asesorBueno = asesorPorCF;
+    }
+    const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
+    const Vendedor_Kommo = asesorBueno;
+    const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
 
-      const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
+    // Razón de pérdida
+    const Motivo_Perdida_Id = lead?.loss_reason_id ?? null;
+    const Motivo_Perdida_Nombre = Motivo_Perdida_Id
+      ? (lossDefs.byId[String(Motivo_Perdida_Id)] || "")
+      : "";
 
-      const Motivo_Perdida_Id = lead?.loss_reason_id ?? null;
-      const Motivo_Perdida_Nombre = Motivo_Perdida_Id
-        ? (lossDefs.byId[String(Motivo_Perdida_Id)] || '')
-        : '';
+    // También reflejamos PHONE/EMAIL como “system” en fields_pretty
+    fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
+    fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
+    // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego calculados
+    outLeads.push({
+      ...l,
+      responsible_user_id,
+      custom_fields,
+      fields_pretty,
+      mapeo: {
+        // 1) CF "bonitos"
+        ...mapeoCampos,
 
-      // También reflejamos PHONE/EMAIL como “system” en fields_pretty
-      fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
-      fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
+        // 2) Calculados
+        Etapa_Legible,
+        Asesor_Nombre: asesorBueno,
+        Vendedor,
+        Vendedor_Kommo,
+        Asesor_Codigo,
+        StageName_SF,
+        Tipo_Id,
+        Tipo_Nombre,
 
-      // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego calculados
-      outLeads.push({
-        ...l,
-        responsible_user_id,
-        custom_fields,
-        fields_pretty,
-        mapeo: {
-          // 1) CF "bonitos"
-          ...mapeoCampos,
+        // Contacto principal
+        Contacto_Id,
+        Contacto_Nombre,
+        Telefono: Telefono_Principal,
+        Telefono_Clean: Telefono_Principal_Clean,
+        Telefonos,
+        Telefonos_Clean,
+        Email_Principal,
 
-          // 2) Calculados
-          Etapa_Legible,
-          Asesor_Nombre: asesorBueno,
-          Vendedor,
-          Vendedor_Kommo,
-          Asesor_Codigo,
-          StageName_SF,
-          Tipo_Id,
-          Tipo_Nombre,
+        // Fecha de cierre
+        Fecha_Cierre_ISO: closeCalc.iso,
+        Fecha_Cierre_MDY: closeCalc.us,
 
-          // Contacto principal
-          Contacto_Id,
-          Contacto_Nombre,
-          Telefono: Telefono_Principal,
-          Telefono_Clean: Telefono_Principal_Clean,
-          Telefonos,
-          Telefonos_Clean,
-          Email_Principal,
+        // Fecha de HOY (día actual)
+        Hoy_ISO:   todayCalc.iso,
+        Hoy_MDY:   todayCalc.us,
+        Hoy_Dia:   todayCalc.parts.day,
+        Hoy_Mes:   todayCalc.parts.month,
+        Hoy_Anio2: todayCalc.parts.year2,
+        Hoy_Anio4: todayCalc.parts.year4,
+        Hoy_Dot:   todayCalc.dmY_dots,
+        Hoy_Slash: todayCalc.dmY_slash,
 
-          // Fecha de cierre (como ya tenías)
-          Fecha_Cierre_ISO: closeCalc.iso,
-          Fecha_Cierre_MDY: closeCalc.us,
+        // === NUEVOS para cierre en Salesforce ===
+        Oportunidades_SF_Urls: OppUrls,
+        Oportunidades_SF_Ids: OppIds,
 
-          // === NUEVOS: Fecha de HOY (día actual)
-          Hoy_ISO:   todayCalc.iso,                 // "YYYY-MM-DD"
-          Hoy_MDY:   todayCalc.us,                  // "MM/DD/YYYY"
-          Hoy_Dia:   todayCalc.parts.day,           // "23"
-          Hoy_Mes:   todayCalc.parts.month,         // "09"
-          Hoy_Anio2: todayCalc.parts.year2,         // "25"
-          Hoy_Anio4: todayCalc.parts.year4,         // "2025"
-          Hoy_Dot:   todayCalc.dmY_dots,            // "DD.MM.YY"
-          Hoy_Slash: todayCalc.dmY_slash,           // "DD/MM/YY"
+        // Razón de pérdida (Kommo)
+        Motivo_Perdida_Id,
+        Motivo_Perdida_Nombre,
+      },
+    });
 
-          // === NUEVOS para cierre en Salesforce ===
-           Oportunidades_SF_Urls: OppUrls,
-           Oportunidades_SF_Ids: OppIds,
-            // Razón de pérdida (Kommo)
-            Motivo_Perdida_Id,
-            Motivo_Perdida_Nombre,
-        },
-      });
     }
 
     res.json({ ok: true, leads: outLeads, account: accountIn });
