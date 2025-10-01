@@ -567,6 +567,13 @@ app.post("/kommo/translate", async (req, res) => {
       catch (e) { console.warn("No se pudieron cargar definiciones de CF:", e.message); }
     }
 
+    // razones de pérdida (para mapear id -> nombre)
+    let lossDefs = { byId: {} };
+    if (subdomain) {
+      try { lossDefs = await ensureLossReasons(subdomain, getAccessToken); }
+      catch (e) { console.warn("No se pudieron cargar razones de pérdida:", e.message); }
+}
+
     // Config TZ y fecha de cierre
     const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
     const tz        = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
@@ -733,6 +740,12 @@ app.post("/kommo/translate", async (req, res) => {
 
       const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
 
+      const Motivo_Perdida_Id = lead?.loss_reason_id ?? null;
+      const Motivo_Perdida_Nombre = Motivo_Perdida_Id
+        ? (lossDefs.byId[String(Motivo_Perdida_Id)] || '')
+        : '';
+
+
       // También reflejamos PHONE/EMAIL como “system” en fields_pretty
       fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
       fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
@@ -783,8 +796,9 @@ app.post("/kommo/translate", async (req, res) => {
           // === NUEVOS para cierre en Salesforce ===
            Oportunidades_SF_Urls: OppUrls,
            Oportunidades_SF_Ids: OppIds,
-           Motivo_Perdida_Id: toStr(lead.loss_reason_id || ""),
-           Motivo_Perdida_Nombre: lead.loss_reason || "",
+            // Razón de pérdida (Kommo)
+            Motivo_Perdida_Id,
+            Motivo_Perdida_Nombre,
         },
       });
     }
