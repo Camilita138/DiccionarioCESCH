@@ -231,7 +231,6 @@ const ETAPAS = {
   "58474143": "CONTRATO",
   "73578024": "VENTA CONCRETADA",
   "59561095": "SERVICIOS CAMARA",
-  "143": "Leads perdidos",
 };
 const TIPOS_BY_ID = {
   "1284399": "Negocio Existente",
