@@ -117,7 +117,6 @@ function extractSFIds(mapeoCampos) {
     if (rawVal === undefined || rawVal === null) continue;
 
     const lowerKey = key.toLowerCase();
-    // buscamos claves tipo Url_Oportunidad_SF, URL_OP2, etc.
     if (!(lowerKey.includes("url") && (lowerKey.includes("oportunidad") || lowerKey.includes("op")))) continue;
 
     const values = Array.isArray(rawVal) ? rawVal : [rawVal];
@@ -126,19 +125,19 @@ function extractSFIds(mapeoCampos) {
       const link = String(v).trim();
       if (!link) continue;
 
-      // recolecta URL si parece URL
-      if (/^https?:\/\//i.test(link)) urls.push(link);
+      // recolecta siempre el link, aunque no tenga http
+      urls.push(link.startsWith("http") ? link : "http://" + link);
 
       // extrae un posible ID de Salesforce (15 o 18 chars alfanum)
-      const idMatch = link.match(/(?<![A-Za-z0-9])([A-Za-z0-9]{15,18})(?![A-Za-z0-9])/);
+      const idMatch = link.match(/([A-Za-z0-9]{15,18})/);
       if (idMatch) ids.push(idMatch[1]);
     }
   }
 
-  // quita duplicados
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
   return { urls: uniq(urls), ids: uniq(ids) };
 }
+
 /** ======================================= **/
 
 /* ================= Diccionarios negocio ================= */
@@ -734,8 +733,10 @@ app.post("/kommo/translate", async (req, res) => {
           Hoy_Slash: todayCalc.dmY_slash,           // "DD/MM/YY"
 
           // === NUEVOS para cierre en Salesforce ===
-          Oportunidades_SF_Urls: OppUrls,
-          Oportunidades_SF_Ids: OppIds,
+           Oportunidades_SF_Urls: OppUrls,
+           Oportunidades_SF_Ids: OppIds,
+           Motivo_Perdida_Id: toStr(lead.loss_reason_id || ""),
+           Motivo_Perdida_Nombre: lead.loss_reason || "",
         },
       });
     }
