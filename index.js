@@ -130,7 +130,6 @@ function extractSFIds(mapeoCampos) {
       if (/^https?:\/\//i.test(link)) urls.push(link);
 
       // extrae un posible ID de Salesforce (15 o 18 chars alfanum)
-      // opcionalmente prioriza objetos 006 (Opportunity), pero deja genérico por si guardan el link completo con parámetros
       const idMatch = link.match(/(?<![A-Za-z0-9])([A-Za-z0-9]{15,18})(?![A-Za-z0-9])/);
       if (idMatch) ids.push(idMatch[1]);
     }
