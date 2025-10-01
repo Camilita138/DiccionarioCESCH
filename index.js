@@ -109,34 +109,60 @@ function todayTZ(tz = "America/Guayaquil") {
 }
 
 /* === NUEVO: extraer Salesforce OppIds desde links === */
+/* === NUEVO: extraer Salesforce OppIds desde links (robusto) === */
 function extractSFIds(mapeoCampos) {
   const urls = [];
   const ids = [];
 
-  for (const [key, rawVal] of Object.entries(mapeoCampos)) {
-    if (rawVal === undefined || rawVal === null) continue;
+  // Parsear un valor (puede traer 1+ links separados por espacio/coma/nueva línea)
+  const parseOne = (raw) => {
+    if (!raw) return;
+    const s = String(raw).trim();
+    if (!s) return;
 
-    const lowerKey = key.toLowerCase();
-    if (!(lowerKey.includes("url") && (lowerKey.includes("oportunidad") || lowerKey.includes("op")))) continue;
+    // Si un campo trae varios links en una sola cadena
+    const parts = s.split(/[\s,;]+/).filter(Boolean);
 
-    const values = Array.isArray(rawVal) ? rawVal : [rawVal];
-    for (const v of values) {
-      if (!v) continue;
-      const link = String(v).trim();
-      if (!link) continue;
+    for (let p of parts) {
+      // Si no trae protocolo pero parece dominio, asumimos https
+      if (!/^https?:\/\//i.test(p) && /[\w-]+\.[\w.-]+/.test(p)) {
+        p = `https://${p}`;
+      }
 
-      // recolecta siempre el link, aunque no tenga http
-      urls.push(link.startsWith("http") ? link : "http://" + link);
+      // Guardamos la URL si ya parece URL
+      if (/^https?:\/\//i.test(p)) {
+        urls.push(p);
+      }
 
-      // extrae un posible ID de Salesforce (15 o 18 chars alfanum)
-      const idMatch = link.match(/([A-Za-z0-9]{15,18})/);
-      if (idMatch) ids.push(idMatch[1]);
+      // Intentar extraer OpportunityId (siempre empieza con 006 y tiene 15 o 18 chars)
+      // 1) Lightning: /lightning/r/Opportunity/006.../view
+      let m =
+        p.match(/\/lightning\/r\/(?:\w+\/)?(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
+        // 2) Query param ?id=006...
+        p.match(/[?&](?:id|Id|ID)=(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
+        // 3) Clásico: .../006... (corta al final de segmento)
+        p.match(/\/(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)(?:[/?#]|$)/);
+
+      if (m) ids.push(m[1]);
     }
+  };
+
+  // Recorremos los CF normalizados: Url_Oportunidad_Sf, Url_Op2, Url_Op3, etc.
+  for (const [key, rawVal] of Object.entries(mapeoCampos)) {
+    const k = key.toLowerCase();
+    const esCampoUrlDeOp =
+      k.includes('url') && (k.includes('oportunidad') || /\bop\d*\b/.test(k));
+    if (!esCampoUrlDeOp) continue;
+
+    if (Array.isArray(rawVal)) rawVal.forEach(parseOne);
+    else parseOne(rawVal);
   }
 
-  const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
-  return { urls: uniq(urls), ids: uniq(ids) };
+  // Quitamos duplicados preservando orden
+  const dedupe = (arr) => Array.from(new Set(arr.filter(Boolean)));
+  return { urls: dedupe(urls), ids: dedupe(ids) };
 }
+
 
 /** ======================================= **/
 
@@ -439,6 +465,28 @@ async function ensureLeadFieldDefs(subdomain, getTokenFn) {
   CF_CACHE = { ts: Date.now(), byId, byIdType: byType, byIdLabel: byLabel };
   return CF_CACHE;
 }
+
+/* ====== Razones de pérdida (cache) ====== */
+let LOSS_CACHE = { ts: 0, byId: {} };
+
+async function ensureLossReasons(subdomain, getTokenFn) {
+  const MAX_AGE = 10 * 60 * 1000; // 10 min
+  if (Date.now() - LOSS_CACHE.ts < MAX_AGE && Object.keys(LOSS_CACHE.byId).length) {
+    return LOSS_CACHE;
+  }
+  const token = await getTokenFn(subdomain);
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const url = `https://${subdomain}.kommo.com/api/v4/leads/loss_reasons`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error(`GET loss_reasons ${r.status}`);
+  const data = await r.json();
+  const byId = {};
+  const items = data?._embedded?.loss_reasons || [];
+  for (const it of items) byId[String(it.id)] = it.name || '';
+  LOSS_CACHE = { ts: Date.now(), byId };
+  return LOSS_CACHE;
+}
+
 
 /* ================= Endpoints “legacy” ================= */
 app.post("/mapear", (req, res) => {
