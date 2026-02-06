@@ -344,8 +344,25 @@ function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
 let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
 
 async function getAccessToken(subdomain) {
-  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // sin "Bearer"
+
+  console.log("🔐 KOMMO AUTH CHECK", {
+    usingApiToken: !!process.env.KOMMO_API_TOKEN,
+    hasRefreshToken: !!process.env.KOMMO_REFRESH_TOKEN,
+    hasCachedToken: !!ACCESS_TOKEN,
+    subdomain
+  });
+
+  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN;
   if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
+  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
+  if (ACCESS_TOKEN) return ACCESS_TOKEN;
+  throw new Error("No Kommo token configured");
+}
+
+
+async function getAccessToken(subdomain) {
+  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
+  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN;
   if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
   if (ACCESS_TOKEN) return ACCESS_TOKEN;
   throw new Error("No Kommo token configured");
