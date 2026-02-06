@@ -344,12 +344,17 @@ function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
 let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
 
 async function getAccessToken(subdomain) {
-  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // sin "Bearer"
-  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
-  if (process.env.KOMMO_REFRESH_TOKEN) return refreshAccessToken(subdomain);
-  if (ACCESS_TOKEN) return ACCESS_TOKEN;
-  throw new Error("No Kommo token configured");
+  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) {
+    return ACCESS_TOKEN;
+  }
+
+  if (process.env.KOMMO_REFRESH_TOKEN) {
+    return await refreshAccessToken(subdomain);
+  }
+
+  throw new Error("No Kommo OAuth configured");
 }
+
 
 async function refreshAccessToken(subdomain) {
   const url = `https://${subdomain}.kommo.com/oauth2/access_token`;
