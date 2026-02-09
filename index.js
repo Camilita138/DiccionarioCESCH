@@ -823,6 +823,42 @@ app.post("/kommo/translate", async (req, res) => {
   }
 });
 
+/* ================= Debug Kommo connection ================= */
+app.get("/debug/kommo", async (req, res) => {
+  const subdomain = process.env.KOMMO_SUBDOMAIN || "no-configurado";
+  const tokenExists = !!process.env.KOMMO_API_TOKEN;
+  const tokenFirst10 = process.env.KOMMO_API_TOKEN ? process.env.KOMMO_API_TOKEN.slice(0, 10) + "..." : "no-token";
+  const tokenLength = process.env.KOMMO_API_TOKEN ? process.env.KOMMO_API_TOKEN.length : 0;
+  
+  let apiTest = { status: "not-tested", message: "" };
+  
+  if (tokenExists && subdomain !== "no-configurado") {
+    try {
+      const token = process.env.KOMMO_API_TOKEN;
+      const url = `https://${subdomain}.kommo.com/api/v4/account`;
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+      });
+      if (r.ok) {
+        const data = await r.json();
+        apiTest = { status: "ok", message: `Conectado a cuenta: ${data.name || data.id}` };
+      } else {
+        apiTest = { status: "error", message: `HTTP ${r.status} - ${r.statusText}` };
+      }
+    } catch (e) {
+      apiTest = { status: "error", message: e.message };
+    }
+  }
+  
+  res.json({
+    subdomain,
+    tokenExists,
+    tokenFirst10,
+    tokenLength,
+    apiTest
+  });
+});
+
 /* ================= Root ================= */
 app.get("/", (_req, res) => res.send("✅ DiccionarioCESCH API funcionando."));
 app.listen(PORT, () => console.log("✅ Servidor corriendo en puerto", PORT));
