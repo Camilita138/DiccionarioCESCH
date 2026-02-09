@@ -343,18 +343,13 @@ function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
 /* ================= Kommo auth & fetch ================= */
 let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
 
-async function getAccessToken(subdomain) {
-  // 1) Si hay token directo (long-lived o access token que tú pegaste)
-  if (process.env.KOMMO_API_TOKEN) return process.env.KOMMO_API_TOKEN; // SIN "Bearer"
-
-  // 2) Si ya refrescaste antes y sigue vigente
-  if (ACCESS_TOKEN && Date.now() < ACCESS_TOKEN_EXP - 60_000) return ACCESS_TOKEN;
-
-  // 3) Si hay refresh token, refresca
-  if (process.env.KOMMO_REFRESH_TOKEN) return await refreshAccessToken(subdomain);
-
-  throw new Error("No Kommo token configured (set KOMMO_API_TOKEN or OAuth vars)");
+async function getAccessToken() {
+  if (!process.env.KOMMO_API_TOKEN) {
+    throw new Error("Missing KOMMO_API_TOKEN");
+  }
+  return process.env.KOMMO_API_TOKEN;
 }
+
 
 
 
