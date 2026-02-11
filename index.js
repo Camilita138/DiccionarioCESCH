@@ -340,6 +340,8 @@ function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   return "00";
 }
 
+
+
 /* ================= Kommo auth & fetch ================= */
 let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
 
@@ -839,3 +841,17 @@ app.get("/debug/kommo", async (req, res) => {
 /* ================= Root ================= */
 app.get("/", (_req, res) => res.send("✅ DiccionarioCESCH API funcionando."));
 app.listen(PORT, () => console.log("✅ Servidor corriendo en puerto", PORT));
+
+app.get("/debug/raw", async (req, res) => {
+  const token = "PEGA_AQUI_EL_TOKEN_QUE_FUNCIONA_EN_POSTMAN";
+
+  const r = await fetch("https://gruporegalado.kommo.com/api/v4/account", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json"
+    }
+  });
+
+  const text = await r.text();
+  res.json({ status: r.status, body: text });
+});
