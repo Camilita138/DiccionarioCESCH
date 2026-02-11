@@ -855,3 +855,9 @@ app.get("/debug/raw", async (req, res) => {
   const text = await r.text();
   res.json({ status: r.status, body: text });
 });
+
+app.get("/debug/ip", async (req, res) => {
+  const r = await fetch("https://api.ipify.org?format=json");
+  const data = await r.json();
+  res.json(data);
+});
