@@ -353,27 +353,6 @@ async function getAccessToken() {
 
 
 
-async function refreshAccessToken(subdomain) {
-  const url = `https://${subdomain}.kommo.com/oauth2/access_token`;
-  const body = {
-    client_id: process.env.KOMMO_CLIENT_ID,
-    client_secret: process.env.KOMMO_CLIENT_SECRET,
-    grant_type: "refresh_token",
-    refresh_token: process.env.KOMMO_REFRESH_TOKEN,
-    redirect_uri: process.env.KOMMO_REDIRECT_URI,
-  };
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`Kommo refresh failed ${r.status}`);
-  const data = await r.json();
-  ACCESS_TOKEN = data.access_token;
-  ACCESS_TOKEN_EXP = Date.now() + (data.expires_in || 3600) * 1000;
-  return ACCESS_TOKEN;
-}
-
 // GET lead con contactos
 async function fetchLeadFull(subdomain, id) {
   const token = await getAccessToken(subdomain);
@@ -565,7 +544,12 @@ app.post("/kommo/translate", async (req, res) => {
     const payload = req.body || {};
     const leadsIn = pickLeads(payload);
     const accountIn = pickAccount(payload) || {};
-    const subdomain = (accountIn?.subdomain || process.env.KOMMO_SUBDOMAIN || "").trim();
+    const subdomain = (
+      accountIn?.subdomain ||
+      process.env.KOMMO_SUBDOMAIN ||
+      "gruporegalado"
+    ).trim();
+
 
     // definiciones de campos (para nombres y enums)
     let defs = null;
