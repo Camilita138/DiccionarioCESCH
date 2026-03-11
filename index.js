@@ -270,7 +270,8 @@ const ASESORES = {
   "1287293": "Kgallardo",
   "1290976": "Damaris Ñacato",
   "1291073": "Veyda Pinela",
-  "1292851": "María José Rosas"
+  "1292851": "María José Rosas",
+  "1292909": "Gisela Alvarez"
 };
 
 /* === Kommo → Vendedor (Salesforce “corto”) === */
@@ -291,7 +292,8 @@ const VENDEDOR_SF = (() => {
     "veyda pinela": "Veyda",
     "alibox": "Alibox",
     "karina vivas": "Karina",
-    "maría josé rosas": "María José Rosas"
+    "maría josé rosas": "María José Rosas",
+    "gisela alvarez": "Gisela Alvarez"
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -312,6 +314,7 @@ const ASESORES_KOMMO_CODE = {
   "Veyda Pinela": "15",
   "Karina Vivas": "05",
   "María José Rosas": "08",
+  "Gisela Alvarez": "17",
 };
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
@@ -331,6 +334,7 @@ const VENDEDOR_SHORT_TO_CODE = {
   Veyda: "15",
   Karina: "05",
   "María José Rosas": "08",
+  "Gisela Alvarez": "17",
 };
 function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
