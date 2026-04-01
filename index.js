@@ -83,7 +83,6 @@ function cleanEcPhone(raw) {
 }
 
 /** ====== FECHAS con TZ ====== **/
-// Sumar días (para fecha de cierre) y devolver formatos y partes
 function addDaysTZ(days = 0, tz = "America/Guayaquil") {
   const now = new Date();
   const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
@@ -98,73 +97,58 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
     iso: `${y}-${m}-${d}`,     // YYYY-MM-DD
     us:  `${m}/${d}/${y}`,     // MM/DD/YYYY
     parts: { day: d, month: m, year2: yy, year4: String(y) },
-    dmY_dots:  `${d}.${m}.${yy}`, // 23.09.25
-    dmY_slash: `${d}/${m}/${yy}`, // 23/09/25
+    dmY_dots:  `${d}.${m}.${yy}`,
+    dmY_slash: `${d}/${m}/${yy}`,
   };
 }
 
-// Fecha de HOY (sin sumar días), en la misma forma
 function todayTZ(tz = "America/Guayaquil") {
   return addDaysTZ(0, tz);
 }
 
-/* === NUEVO: extraer Salesforce OppIds desde links === */
-/* === NUEVO: extraer Salesforce OppIds desde links (robusto) === */
+/* === Extraer Salesforce OppIds desde links === */
 function extractSFIds(mapeoCampos) {
   const urls = [];
   const ids = [];
 
-  // Parsear un valor (puede traer 1+ links separados por espacio/coma/nueva línea)
   const parseOne = (raw) => {
     if (!raw) return;
     const s = String(raw).trim();
     if (!s) return;
 
-    // Si un campo trae varios links en una sola cadena
     const parts = s.split(/[\s,;]+/).filter(Boolean);
 
     for (let p of parts) {
-      // Si no trae protocolo pero parece dominio, asumimos https
       if (!/^https?:\/\//i.test(p) && /[\w-]+\.[\w.-]+/.test(p)) {
         p = `https://${p}`;
       }
 
-      // Guardamos la URL si ya parece URL
       if (/^https?:\/\//i.test(p)) {
         urls.push(p);
       }
 
-      // Intentar extraer OpportunityId (siempre empieza con 006 y tiene 15 o 18 chars)
-      // 1) Lightning: /lightning/r/Opportunity/006.../view
       let m =
         p.match(/\/lightning\/r\/(?:\w+\/)?(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
-        // 2) Query param ?id=006...
         p.match(/[?&](?:id|Id|ID)=(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
-        // 3) Clásico: .../006... (corta al final de segmento)
         p.match(/\/(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)(?:[/?#]|$)/);
 
       if (m) ids.push(m[1]);
     }
   };
 
-  // Recorremos los CF normalizados: Url_Oportunidad_Sf, Url_Op2, Url_Op3, etc.
   for (const [key, rawVal] of Object.entries(mapeoCampos)) {
     const k = key.toLowerCase();
     const esCampoUrlDeOp =
-      k.includes('url') && (k.includes('oportunidad') || /\bop\d*\b/.test(k));
+      k.includes("url") && (k.includes("oportunidad") || /\bop\d*\b/.test(k));
     if (!esCampoUrlDeOp) continue;
 
     if (Array.isArray(rawVal)) rawVal.forEach(parseOne);
     else parseOne(rawVal);
   }
 
-  // Quitamos duplicados preservando orden
   const dedupe = (arr) => Array.from(new Set(arr.filter(Boolean)));
   return { urls: dedupe(urls), ids: dedupe(ids) };
 }
-
-
-/** ======================================= **/
 
 /* ================= Diccionarios negocio ================= */
 const CAMPANAS = {
@@ -197,7 +181,7 @@ const CAMPANAS = {
   "1290011": "Webinar Carga Compartida",
   "1290033": "Sem.Esmaraldas.29.05.2025",
   "1290069": "Sem.Jipijapa.04.06.2025",
-  "1290047": "TLC12/06/2025",
+  "1290047": "TLC12/06.2025",
   "1290169": "WEB.PROECUADOR",
   "1290211": "WEB.NAVIDAD",
   "1290427": "WEB.CONAGOPARE",
@@ -243,7 +227,6 @@ const TIPOS_BY_NAME = Object.fromEntries(
   Object.entries(TIPOS_BY_ID).map(([id, nombre]) => [norm(nombre), { id, nombre }])
 );
 
-/* ==== ASESORES (Kommo) por ID → Nombre ==== */
 const ASESORES = {
   "1277529": "Denisse de la Cruz",
   "1277511": "Sami Cachiguango",
@@ -275,7 +258,6 @@ const ASESORES = {
   "1294127": "Melanny Muñoz"
 };
 
-/* === Kommo → Vendedor (Salesforce “corto”) === */
 const VENDEDOR_SF = (() => {
   const base = {
     "denisse de la cruz": "Denisse",
@@ -300,7 +282,6 @@ const VENDEDOR_SF = (() => {
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
 
-/* === Códigos oficiales por nombre Kommo === */
 const ASESORES_KOMMO_CODE = {
   "Denisse de la Cruz": "01",
   "Sami Cachiguango": "11",
@@ -348,20 +329,11 @@ function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   return "00";
 }
 
-
-
 /* ================= Kommo auth & fetch ================= */
-let ACCESS_TOKEN = null, ACCESS_TOKEN_EXP = 0;
-
 async function getAccessToken() {
   return process.env.KOMMO_API_TOKEN.trim();
 }
 
-
-
-
-
-// GET lead con contactos
 async function fetchLeadFull(subdomain, id) {
   const token = await getAccessToken(subdomain);
   const base = `https://${subdomain}.kommo.com/api/v4`;
@@ -399,7 +371,6 @@ async function fetchUserName(subdomain, userId) {
   return data?.name || null;
 }
 
-// Contactos por IDs
 async function fetchContactsByIds(subdomain, ids) {
   if (!ids?.length) return [];
   const token = await getAccessToken(subdomain);
@@ -463,24 +434,162 @@ async function ensureLeadFieldDefs(subdomain, getTokenFn) {
 let LOSS_CACHE = { ts: 0, byId: {} };
 
 async function ensureLossReasons(subdomain, getTokenFn) {
-  const MAX_AGE = 10 * 60 * 1000; // 10 min
+  const MAX_AGE = 10 * 60 * 1000;
   if (Date.now() - LOSS_CACHE.ts < MAX_AGE && Object.keys(LOSS_CACHE.byId).length) {
     return LOSS_CACHE;
   }
   const token = await getAccessToken(subdomain);
-  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   const url = `https://${subdomain}.kommo.com/api/v4/leads/loss_reasons`;
   const r = await fetch(url, { headers });
   if (!r.ok) throw new Error(`GET loss_reasons ${r.status}`);
   const data = await r.json();
   const byId = {};
   const items = data?._embedded?.loss_reasons || [];
-  for (const it of items) byId[String(it.id)] = it.name || '';
+  for (const it of items) byId[String(it.id)] = it.name || "";
   LOSS_CACHE = { ts: Date.now(), byId };
   return LOSS_CACHE;
 }
 
+/* ================= NUEVO: Buscar lead Kommo por Opportunity Salesforce ================= */
 
+const SF_URL_FIELD_ID = "1006496"; // Url Oportunidad SF
+
+function extractOppIdFromUrl(url) {
+  const s = String(url || "").trim();
+  const m =
+    s.match(/\/lightning\/r\/(?:\w+\/)?(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
+    s.match(/[?&](?:id|Id|ID)=(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)\b/) ||
+    s.match(/\/(006[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?)(?:[/?#]|$)/);
+  return m ? m[1] : "";
+}
+
+function normalizeUrlLoose(url) {
+  return String(url || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\/+$/, "");
+}
+
+function getCfValueByFieldId(lead, fieldId) {
+  const cfs = normalizeCFs(lead);
+  const cf = cfs.find((x) => String(x.id) === String(fieldId));
+  return cf?.values?.[0]?.value ? String(cf.values[0].value).trim() : "";
+}
+
+async function fetchLeadsPage(subdomain, page = 1, limit = 250) {
+  const token = await getAccessToken(subdomain);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+
+  const url = `https://${subdomain}.kommo.com/api/v4/leads?page=${page}&limit=${limit}&with=contacts`;
+  const r = await fetch(url, { headers });
+
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`Kommo GET leads failed ${r.status}: ${text.slice(0, 300)}`);
+  }
+
+  const data = await r.json();
+  return {
+    leads: data?._embedded?.leads || [],
+    hasNext: !!data?._links?.next?.href,
+  };
+}
+
+app.post("/kommo/find-by-sf-opportunity", async (req, res) => {
+  try {
+    const subdomain = (req.body?.subdomain || process.env.KOMMO_SUBDOMAIN || "gruporegalado").trim();
+    const salesforceUrl = String(req.body?.salesforceUrl || "").trim();
+    let opportunityId = String(req.body?.opportunityId || "").trim();
+
+    if (!opportunityId && salesforceUrl) {
+      opportunityId = extractOppIdFromUrl(salesforceUrl);
+    }
+
+    if (!salesforceUrl && !opportunityId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Debes enviar salesforceUrl u opportunityId",
+      });
+    }
+
+    const checked = [];
+    let page = 1;
+    let found = null;
+
+    while (page <= 20) {
+      const { leads, hasNext } = await fetchLeadsPage(subdomain, page, 250);
+
+      for (const lead of leads) {
+        const sfUrlInLead = getCfValueByFieldId(lead, SF_URL_FIELD_ID);
+        if (!sfUrlInLead) continue;
+
+        const sfOppIdInLead = extractOppIdFromUrl(sfUrlInLead);
+
+        const exactUrlMatch =
+          salesforceUrl &&
+          normalizeUrlLoose(sfUrlInLead) === normalizeUrlLoose(salesforceUrl);
+
+        const oppIdMatch =
+          opportunityId &&
+          sfOppIdInLead &&
+          String(sfOppIdInLead).trim() === String(opportunityId).trim();
+
+        if (exactUrlMatch || oppIdMatch) {
+          found = {
+            lead_id: lead.id,
+            lead_name: lead.name || "",
+            kommo_url: `https://${subdomain}.kommo.com/leads/detail/${lead.id}`,
+            salesforce_url_in_kommo: sfUrlInLead,
+            salesforce_opportunity_id_in_kommo: sfOppIdInLead,
+            matched_by: exactUrlMatch ? "exact_url" : "opportunity_id",
+            page_found: page,
+          };
+          break;
+        }
+      }
+
+      checked.push({ page, count: leads.length });
+
+      if (found || !hasNext) break;
+      page += 1;
+    }
+
+    if (!found) {
+      return res.json({
+        ok: true,
+        found: false,
+        searched: {
+          salesforceUrl,
+          opportunityId,
+          fieldId: SF_URL_FIELD_ID,
+          pagesChecked: checked,
+        },
+      });
+    }
+
+    return res.json({
+      ok: true,
+      found: true,
+      result: found,
+      searched: {
+        salesforceUrl,
+        opportunityId,
+        fieldId: SF_URL_FIELD_ID,
+        pagesChecked: checked,
+      },
+    });
+  } catch (err) {
+    console.error("Error /kommo/find-by-sf-opportunity:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message || "Error interno",
+    });
+  }
+});
 
 /* ================= Endpoints “legacy” ================= */
 app.post("/mapear", (req, res) => {
@@ -558,33 +667,28 @@ app.post("/kommo/translate", async (req, res) => {
       "gruporegalado"
     ).trim();
 
-
-    // definiciones de campos (para nombres y enums)
     let defs = null;
     if (subdomain) {
       try { defs = await ensureLeadFieldDefs(subdomain, getAccessToken); }
       catch (e) { console.warn("No se pudieron cargar definiciones de CF:", e.message); }
     }
 
-    // razones de pérdida (para mapear id -> nombre)
     let lossDefs = { byId: {} };
     if (subdomain) {
       try { lossDefs = await ensureLossReasons(subdomain, getAccessToken); }
       catch (e) { console.warn("No se pudieron cargar razones de pérdida:", e.message); }
     }
 
-    // Config TZ y fecha de cierre
     const closeDays = Number(process.env.SF_CLOSE_DAYS || req.query.close_days || 7);
     const tz        = (process.env.SF_TZ || req.query.tz || "America/Guayaquil").trim();
 
     const closeCalc = addDaysTZ(closeDays, tz);
-    const todayCalc = todayTZ(tz); // ← HOY
+    const todayCalc = todayTZ(tz);
 
     const outLeads = [];
     for (const l of leadsIn) {
       let lead = { ...l };
 
-      // enriquecer si faltan datos clave
       const missingCFs = !lead?.custom_fields && !lead?.custom_fields_values;
       const needsEnrich = !(lead?.responsible_user_id) || missingCFs || !lead?._embedded?.contacts;
       if (needsEnrich && lead?.id && subdomain) {
@@ -606,7 +710,6 @@ app.post("/kommo/translate", async (req, res) => {
       const responsible_user_id = toStr(lead.responsible_user_id);
       const custom_fields = normalizeCFs(lead);
 
-      // Etapa + Asesor (por responsible_user_id; si no, luego usamos CF)
       let Etapa_Legible = ETAPAS[status_id] || "Etapa desconocida";
       let Asesor_Nombre = ASESORES[responsible_user_id] || "No encontrado";
       if (Asesor_Nombre === "No encontrado" && subdomain && responsible_user_id) {
@@ -614,7 +717,6 @@ app.post("/kommo/translate", async (req, res) => {
         if (fetched) Asesor_Nombre = fetched;
       }
 
-      // === Contacto principal: teléfonos / emails ===
       let Telefono_Principal = "";
       let Telefono_Principal_Clean = "";
       let Telefonos = [];
@@ -646,7 +748,6 @@ app.post("/kommo/translate", async (req, res) => {
         console.warn("Contacts enrich failed for lead", l.id, e.message);
       }
 
-      // Construimos salida “bonita” para TODOS los CF
       const fields_pretty = [];
       const mapeoCampos = {};
 
@@ -692,115 +793,101 @@ app.post("/kommo/translate", async (req, res) => {
         }
       }
 
-      // === NUEVO: extraer Opps de SF desde los CF ya normalizados ===
-    const { urls: OppUrls, ids: OppIds } = extractSFIds(mapeoCampos);
+      const { urls: OppUrls, ids: OppIds } = extractSFIds(mapeoCampos);
 
-    // Resolver Tipo (ID o texto)
-    let Tipo_Id = null, Tipo_Nombre = "Desconocido";
-    const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
-    if (maybeTipo) {
-      const isNum = !isNaN(Number(maybeTipo));
-      if (isNum) {
-        Tipo_Id = String(maybeTipo);
-        Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
-      } else {
-        const n = norm(maybeTipo);
-        if (TIPOS_BY_NAME[n]) {
-          Tipo_Id = TIPOS_BY_NAME[n].id;
-          Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+      let Tipo_Id = null, Tipo_Nombre = "Desconocido";
+      const maybeTipo = mapeoCampos["Tipo_Id"] ?? mapeoCampos["Tipo"] ?? null;
+      if (maybeTipo) {
+        const isNum = !isNaN(Number(maybeTipo));
+        if (isNum) {
+          Tipo_Id = String(maybeTipo);
+          Tipo_Nombre = TIPOS_BY_ID[Tipo_Id] || "Desconocido";
         } else {
-          Tipo_Nombre = String(maybeTipo);
+          const n = norm(maybeTipo);
+          if (TIPOS_BY_NAME[n]) {
+            Tipo_Id = TIPOS_BY_NAME[n].id;
+            Tipo_Nombre = TIPOS_BY_NAME[n].nombre;
+          } else {
+            Tipo_Nombre = String(maybeTipo);
+          }
         }
       }
-    }
 
-    const stageMapSF = {
-      "Contacto inicial": "Qualification",
-      "DEFINICION DE LISTA": "Prospecting",
-      "COTIZA EL ASESOR": "Proposal/Price Quote",
-      "COTIZA EL CLIENTE": "Negotiation/Review",
-      LIQUIDADO: "Closed Won",
-      "VENTA CONCRETADA": "Closed Won",
-    };
-    const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
+      const stageMapSF = {
+        "Contacto inicial": "Qualification",
+        "DEFINICION DE LISTA": "Prospecting",
+        "COTIZA EL ASESOR": "Proposal/Price Quote",
+        "COTIZA EL CLIENTE": "Negotiation/Review",
+        LIQUIDADO: "Closed Won",
+        "VENTA CONCRETADA": "Closed Won",
+      };
+      const StageName_SF = stageMapSF[Etapa_Legible] || "Qualification";
 
-    // --- Elegir mejor fuente para Asesor y calcular Vendedor SF ---
-    const asesorPorResp = Asesor_Nombre;
-    const asesorPorCF   = toStr(mapeoCampos.Asesor_Nombre || mapeoCampos.Asesor_Value || "");
-    const mapsResp = !!VENDEDOR_SF[norm(asesorPorResp)];
-    const mapsCF   = !!VENDEDOR_SF[norm(asesorPorCF)];
+      const asesorPorResp = Asesor_Nombre;
+      const asesorPorCF   = toStr(mapeoCampos.Asesor_Nombre || mapeoCampos.Asesor_Value || "");
+      const mapsResp = !!VENDEDOR_SF[norm(asesorPorResp)];
+      const mapsCF   = !!VENDEDOR_SF[norm(asesorPorCF)];
 
-    let asesorBueno = asesorPorResp;
-    if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
-      asesorBueno = asesorPorCF;
-    }
-    const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
-    const Vendedor_Kommo = asesorBueno;
-    const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
+      let asesorBueno = asesorPorResp;
+      if ((!mapsResp || norm(asesorPorResp) === "marketing" || asesorPorResp === "No encontrado") && asesorPorCF) {
+        asesorBueno = asesorPorCF;
+      }
+      const Vendedor = VENDEDOR_SF[norm(asesorBueno)] || "";
+      const Vendedor_Kommo = asesorBueno;
+      const Asesor_Codigo = resolveAsesorCodigo(asesorBueno, Vendedor);
 
-    // Razón de pérdida
-    const Motivo_Perdida_Id = lead?.loss_reason_id ?? null;
-    const Motivo_Perdida_Nombre = Motivo_Perdida_Id
-      ? (lossDefs.byId[String(Motivo_Perdida_Id)] || "")
-      : "";
+      const Motivo_Perdida_Id = lead?.loss_reason_id ?? null;
+      const Motivo_Perdida_Nombre = Motivo_Perdida_Id
+        ? (lossDefs.byId[String(Motivo_Perdida_Id)] || "")
+        : "";
 
-    // También reflejamos PHONE/EMAIL como “system” en fields_pretty
-    fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
-    fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
+      fields_pretty.push({ name: "PHONE", type: "system", value: Telefono_Principal });
+      fields_pretty.push({ name: "EMAIL", type: "system", value: Email_Principal });
 
-    // IMPORTANTE: primero los mapeos de CF (mapeoCampos), luego calculados
-    outLeads.push({
-      ...l,
-      responsible_user_id,
-      custom_fields,
-      fields_pretty,
-      mapeo: {
-        // 1) CF "bonitos"
-        ...mapeoCampos,
+      outLeads.push({
+        ...l,
+        responsible_user_id,
+        custom_fields,
+        fields_pretty,
+        mapeo: {
+          ...mapeoCampos,
 
-        // 2) Calculados
-        Etapa_Legible,
-        Asesor_Nombre: asesorBueno,
-        Vendedor,
-        Vendedor_Kommo,
-        Asesor_Codigo,
-        StageName_SF,
-        Tipo_Id,
-        Tipo_Nombre,
+          Etapa_Legible,
+          Asesor_Nombre: asesorBueno,
+          Vendedor,
+          Vendedor_Kommo,
+          Asesor_Codigo,
+          StageName_SF,
+          Tipo_Id,
+          Tipo_Nombre,
 
-        // Contacto principal
-        Contacto_Id,
-        Contacto_Nombre,
-        Telefono: Telefono_Principal,
-        Telefono_Clean: Telefono_Principal_Clean,
-        Telefonos,
-        Telefonos_Clean,
-        Email_Principal,
+          Contacto_Id,
+          Contacto_Nombre,
+          Telefono: Telefono_Principal,
+          Telefono_Clean: Telefono_Principal_Clean,
+          Telefonos,
+          Telefonos_Clean,
+          Email_Principal,
 
-        // Fecha de cierre
-        Fecha_Cierre_ISO: closeCalc.iso,
-        Fecha_Cierre_MDY: closeCalc.us,
+          Fecha_Cierre_ISO: closeCalc.iso,
+          Fecha_Cierre_MDY: closeCalc.us,
 
-        // Fecha de HOY (día actual)
-        Hoy_ISO:   todayCalc.iso,
-        Hoy_MDY:   todayCalc.us,
-        Hoy_Dia:   todayCalc.parts.day,
-        Hoy_Mes:   todayCalc.parts.month,
-        Hoy_Anio2: todayCalc.parts.year2,
-        Hoy_Anio4: todayCalc.parts.year4,
-        Hoy_Dot:   todayCalc.dmY_dots,
-        Hoy_Slash: todayCalc.dmY_slash,
+          Hoy_ISO:   todayCalc.iso,
+          Hoy_MDY:   todayCalc.us,
+          Hoy_Dia:   todayCalc.parts.day,
+          Hoy_Mes:   todayCalc.parts.month,
+          Hoy_Anio2: todayCalc.parts.year2,
+          Hoy_Anio4: todayCalc.parts.year4,
+          Hoy_Dot:   todayCalc.dmY_dots,
+          Hoy_Slash: todayCalc.dmY_slash,
 
-        // === NUEVOS para cierre en Salesforce ===
-        Oportunidades_SF_Urls: OppUrls,
-        Oportunidades_SF_Ids: OppIds,
+          Oportunidades_SF_Urls: OppUrls,
+          Oportunidades_SF_Ids: OppIds,
 
-        // Razón de pérdida (Kommo)
-        Motivo_Perdida_Id,
-        Motivo_Perdida_Nombre,
-      },
-    });
-
+          Motivo_Perdida_Id,
+          Motivo_Perdida_Nombre,
+        },
+      });
     }
 
     res.json({ ok: true, leads: outLeads, account: accountIn });
@@ -816,9 +903,9 @@ app.get("/debug/kommo", async (req, res) => {
   const tokenExists = !!process.env.KOMMO_API_TOKEN;
   const tokenFirst10 = process.env.KOMMO_API_TOKEN ? process.env.KOMMO_API_TOKEN.slice(0, 10) + "..." : "no-token";
   const tokenLength = process.env.KOMMO_API_TOKEN ? process.env.KOMMO_API_TOKEN.length : 0;
-  
+
   let apiTest = { status: "not-tested", message: "" };
-  
+
   if (tokenExists && subdomain !== "no-configurado") {
     try {
       const token = process.env.KOMMO_API_TOKEN;
@@ -836,7 +923,7 @@ app.get("/debug/kommo", async (req, res) => {
       apiTest = { status: "error", message: e.message };
     }
   }
-  
+
   res.json({
     subdomain,
     tokenExists,
@@ -850,7 +937,7 @@ app.get("/debug/kommo", async (req, res) => {
 app.get("/", (_req, res) => res.send("✅ DiccionarioCESCH API funcionando."));
 app.listen(PORT, () => console.log("✅ Servidor corriendo en puerto", PORT));
 
-app.get("/debug/raw", async (req, res) => {
+app.get("/debug/raw", async (_req, res) => {
   const token = "PEGA_AQUI_EL_TOKEN_QUE_FUNCIONA_EN_POSTMAN";
 
   const r = await fetch("https://gruporegalado.kommo.com/api/v4/account", {
@@ -864,7 +951,7 @@ app.get("/debug/raw", async (req, res) => {
   res.json({ status: r.status, body: text });
 });
 
-app.get("/debug/ip", async (req, res) => {
+app.get("/debug/ip", async (_req, res) => {
   const r = await fetch("https://api.ipify.org?format=json");
   const data = await r.json();
   res.json(data);
