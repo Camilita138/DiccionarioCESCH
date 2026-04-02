@@ -452,7 +452,6 @@ async function ensureLossReasons(subdomain, getTokenFn) {
 }
 
 /* ================= NUEVO: Buscar lead Kommo por Opportunity Salesforce ================= */
-
 const SF_URL_FIELD_ID = "1006496"; // Url Oportunidad SF
 
 function extractOppIdFromUrl(url) {
@@ -472,19 +471,30 @@ function normalizeUrlLoose(url) {
 }
 
 function getCfValueByFieldId(lead, fieldId) {
-  const cfs = normalizeCFs(lead);
-  const cf = cfs.find((x) => String(x.id) === String(fieldId));
-  return cf?.values?.[0]?.value ? String(cf.values[0].value).trim() : "";
+  const cfs = Array.isArray(lead?.custom_fields_values)
+    ? lead.custom_fields_values
+    : [];
+
+  const cf = cfs.find((x) => String(x.field_id) === String(fieldId));
+
+  if (!cf || !Array.isArray(cf.values) || !cf.values.length) {
+    return "";
+  }
+
+  const rawValue = cf.values[0]?.value;
+  return rawValue ? String(rawValue).trim() : "";
 }
 
 async function fetchLeadsPage(subdomain, page = 1, limit = 250) {
   const token = await getAccessToken(subdomain);
+
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
 
-  const url = `https://${subdomain}.kommo.com/api/v4/leads?page=${page}&limit=${limit}&with=contacts`;
+  const url = `https://${subdomain}.kommo.com/api/v4/leads?page=${page}&limit=${limit}`;
+
   const r = await fetch(url, { headers });
 
   if (!r.ok) {
@@ -493,6 +503,7 @@ async function fetchLeadsPage(subdomain, page = 1, limit = 250) {
   }
 
   const data = await r.json();
+
   return {
     leads: data?._embedded?.leads || [],
     hasNext: !!data?._links?.next?.href,
@@ -501,7 +512,10 @@ async function fetchLeadsPage(subdomain, page = 1, limit = 250) {
 
 app.post("/kommo/find-by-sf-opportunity", async (req, res) => {
   try {
-    const subdomain = (req.body?.subdomain || process.env.KOMMO_SUBDOMAIN || "gruporegalado").trim();
+    const subdomain = String(
+      req.body?.subdomain || process.env.KOMMO_SUBDOMAIN || "gruporegalado"
+    ).trim();
+
     const salesforceUrl = String(req.body?.salesforceUrl || "").trim();
     let opportunityId = String(req.body?.opportunityId || "").trim();
 
@@ -520,12 +534,53 @@ app.post("/kommo/find-by-sf-opportunity", async (req, res) => {
     let page = 1;
     let found = null;
 
-    while (page <= 20) {
+    let totalLeadsChecked = 0;
+    let leadsWithCustomFields = 0;
+    let leadsWithTargetField = 0;
+    let sampleValues = [];
+
+    while (true) {
       const { leads, hasNext } = await fetchLeadsPage(subdomain, page, 250);
 
+      checked.push({ page, count: leads.length });
+
+      if (!leads.length) {
+        break;
+      }
+
       for (const lead of leads) {
-        const sfUrlInLead = getCfValueByFieldId(lead, SF_URL_FIELD_ID);
-        if (!sfUrlInLead) continue;
+        totalLeadsChecked += 1;
+
+        const cfs = Array.isArray(lead?.custom_fields_values)
+          ? lead.custom_fields_values
+          : [];
+
+        if (cfs.length) {
+          leadsWithCustomFields += 1;
+        }
+
+        const targetCf = cfs.find(
+          (x) => String(x.field_id) === String(SF_URL_FIELD_ID)
+        );
+
+        if (!targetCf) {
+          continue;
+        }
+
+        leadsWithTargetField += 1;
+
+        const sfUrlInLead =
+          targetCf?.values?.[0]?.value
+            ? String(targetCf.values[0].value).trim()
+            : "";
+
+        if (!sfUrlInLead) {
+          continue;
+        }
+
+        if (sampleValues.length < 10) {
+          sampleValues.push(sfUrlInLead);
+        }
 
         const sfOppIdInLead = extractOppIdFromUrl(sfUrlInLead);
 
@@ -552,45 +607,36 @@ app.post("/kommo/find-by-sf-opportunity", async (req, res) => {
         }
       }
 
-      checked.push({ page, count: leads.length });
+      if (found || !hasNext) {
+        break;
+      }
 
-      if (found || !hasNext) break;
       page += 1;
-    }
-
-    if (!found) {
-      return res.json({
-        ok: true,
-        found: false,
-        searched: {
-          salesforceUrl,
-          opportunityId,
-          fieldId: SF_URL_FIELD_ID,
-          pagesChecked: checked,
-        },
-      });
     }
 
     return res.json({
       ok: true,
-      found: true,
+      found: !!found,
       result: found,
       searched: {
         salesforceUrl,
         opportunityId,
         fieldId: SF_URL_FIELD_ID,
         pagesChecked: checked,
+        totalLeadsChecked,
+        leadsWithCustomFields,
+        leadsWithTargetField,
+        sampleValues,
       },
     });
   } catch (err) {
     console.error("Error /kommo/find-by-sf-opportunity:", err);
-    res.status(500).json({
+    return res.status(500).json({
       ok: false,
       error: err.message || "Error interno",
     });
   }
 });
-
 /* ================= Endpoints “legacy” ================= */
 app.post("/mapear", (req, res) => {
   const input = req.body;
