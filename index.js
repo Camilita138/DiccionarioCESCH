@@ -255,7 +255,9 @@ const ASESORES = {
   "1291073": "Veyda Pinela",
   "1292851": "María José Rosas",
   "1292909": "Gisela Alvarez",
-  "1294127": "Melanny Muñoz"
+  "1294127": "Melanny Muñoz",
+  "1294385": "Sabrina Bonilla"
+
 };
 
 const VENDEDOR_SF = (() => {
@@ -277,7 +279,8 @@ const VENDEDOR_SF = (() => {
     "karina vivas": "Karina",
     "maría josé rosas": "María José Rosas",
     "gisela alvarez": "Gisela Alvarez",
-    "melanny muñoz": "Melanny Muñoz"
+    "melanny muñoz": "Melanny Muñoz",
+    "sabrina bonilla": "Sabrina Bonilla"
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -298,7 +301,8 @@ const ASESORES_KOMMO_CODE = {
   "Karina Vivas": "05",
   "María José Rosas": "08",
   "Gisela Alvarez": "17",
-  "Melanny Muñoz": "19"
+  "Melanny Muñoz": "19",
+  "Sabrina Bonilla": "18",
 };
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
@@ -320,6 +324,7 @@ const VENDEDOR_SHORT_TO_CODE = {
   "María José Rosas": "08",
   "Gisela Alvarez": "17",
   "Melanny Muñoz": "19",
+  "Sabrina Bonilla": "18",
 };
 function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
@@ -635,6 +640,59 @@ app.post("/kommo/find-by-sf-opportunity", async (req, res) => {
       ok: false,
       error: err.message || "Error interno",
     });
+  }
+});
+
+app.get("/kommo/build-index", async (req, res) => {
+  try {
+    const subdomain = "gruporegalado";
+
+    let page = 1;
+    let total = 0;
+
+    while (true) {
+      const { leads, hasNext } = await fetchLeadsPage(subdomain, page, 250);
+
+      if (!leads.length) break;
+
+      for (const lead of leads) {
+        const cfs = lead.custom_fields_values || [];
+
+        const target = cfs.find(
+          (x) => String(x.field_id) === "1006496"
+        );
+
+        if (!target) continue;
+
+        const url = target?.values?.[0]?.value;
+        if (!url) continue;
+
+        const oppId = extractOppIdFromUrl(url);
+        if (!oppId) continue;
+
+        const row = {
+          opportunityId: oppId,
+          lead_id: lead.id,
+          kommo_url: `https://${subdomain}.kommo.com/leads/detail/${lead.id}`,
+          salesforce_url: url
+        };
+
+        console.log(row); // luego lo conectamos a Sheets
+
+        total++;
+      }
+
+      if (!hasNext) break;
+      page++;
+    }
+
+    res.json({
+      ok: true,
+      totalIndexed: total
+    });
+
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 /* ================= Endpoints “legacy” ================= */
