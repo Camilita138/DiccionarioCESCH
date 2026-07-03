@@ -256,8 +256,7 @@ const ASESORES = {
   "1292851": "María José Rosas",
   "1292909": "Gisela Alvarez",
   "1294127": "Melanny Muñoz",
-  "1294385": "Sabrina Bonilla"
-
+  "1294385": "Jennyfer Chasi",
 };
 
 const VENDEDOR_SF = (() => {
@@ -280,7 +279,8 @@ const VENDEDOR_SF = (() => {
     "maría josé rosas": "María José Rosas",
     "gisela alvarez": "Gisela Alvarez",
     "melanny muñoz": "Melanny Muñoz",
-    "sabrina bonilla": "Sabrina Bonilla"
+    "sabrina bonilla": "Sabrina Bonilla",
+    "Jennyfer Chasi": "Jennyfer Chasi",
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -290,7 +290,6 @@ const ASESORES_KOMMO_CODE = {
   "Sami Cachiguango": "11",
   "Daniel Benitez": "06",
   "Marly Moran": "04",
-  "Margarita Carpio": "02",
   "Pablo Jara": "10",
   "Gabriela Nuñez": "03",
   "Ivis Anchundia": "13",
@@ -303,6 +302,7 @@ const ASESORES_KOMMO_CODE = {
   "Gisela Alvarez": "17",
   "Melanny Muñoz": "19",
   "Sabrina Bonilla": "18",
+  "Jennyfer Chasi": "02",
 };
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
@@ -325,6 +325,7 @@ const VENDEDOR_SHORT_TO_CODE = {
   "Gisela Alvarez": "17",
   "Melanny Muñoz": "19",
   "Sabrina Bonilla": "18",
+  "Jennyfer Chasi": "02",
 };
 function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
