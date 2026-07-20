@@ -218,7 +218,7 @@ const ETAPAS = {
 };
 const TIPOS_BY_ID = {
   "1284399": "Negocio Existente",
-  "1276028": "Negocio Nuevo 1",
+  "1284401": "Negocio Nuevo 1",
   "1284403": "Negocio Nuevo 2",
   "1287460": "Asignado",
   "1287462": "Recuperado",
