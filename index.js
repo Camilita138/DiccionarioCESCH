@@ -18,14 +18,23 @@ const firstIdInFreeText = (text, mapObj) => {
 };
 
 // Normaliza CFs de Kommo v4 → { id, values }
+// Se prioriza custom_fields_values porque es el formato completo de la API v4.
 const normalizeCFs = (lead) => {
-  if (Array.isArray(lead?.custom_fields)) return lead.custom_fields;
   if (Array.isArray(lead?.custom_fields_values)) {
     return lead.custom_fields_values.map((cf) => ({
       id: String(cf.field_id),
-      values: cf.values,
+      values: Array.isArray(cf.values) ? cf.values : [],
     }));
   }
+
+  // Compatibilidad con algunos payloads antiguos o parciales.
+  if (Array.isArray(lead?.custom_fields)) {
+    return lead.custom_fields.map((cf) => ({
+      id: String(cf.id ?? cf.field_id),
+      values: Array.isArray(cf.values) ? cf.values : [],
+    }));
+  }
+
   return [];
 };
 
@@ -104,6 +113,52 @@ function addDaysTZ(days = 0, tz = "America/Guayaquil") {
 
 function todayTZ(tz = "America/Guayaquil") {
   return addDaysTZ(0, tz);
+}
+
+/**
+ * Convierte fechas de Kommo a YYYY-MM-DD para campos Date de Salesforce.
+ * Acepta:
+ * - Unix timestamp en segundos.
+ * - Unix timestamp en milisegundos.
+ * - Texto ISO o una fecha YYYY-MM-DD.
+ */
+function kommoDateToISO(rawValue, tz = "America/Guayaquil") {
+  if (rawValue === null || rawValue === undefined || rawValue === "") return "";
+
+  const raw = String(rawValue).trim();
+  if (!raw) return "";
+
+  // Si ya viene como fecha simple, se conserva sin convertir zona horaria.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  let date;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const numericValue = Number(raw);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return "";
+
+    // Kommo normalmente entrega segundos; se soportan también milisegundos.
+    const milliseconds = numericValue < 1e12 ? numericValue * 1000 : numericValue;
+    date = new Date(milliseconds);
+  } else {
+    date = new Date(raw);
+  }
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const getPart = (type) => parts.find((part) => part.type === type)?.value || "";
+  const year = getPart("year");
+  const month = getPart("month");
+  const day = getPart("day");
+
+  return year && month && day ? `${year}-${month}-${day}` : "";
 }
 
 /* === Extraer Salesforce OppIds desde links === */
@@ -794,20 +849,45 @@ app.post("/kommo/translate", async (req, res) => {
     for (const l of leadsIn) {
       let lead = { ...l };
 
-      const missingCFs = !lead?.custom_fields && !lead?.custom_fields_values;
-      const needsEnrich = !(lead?.responsible_user_id) || missingCFs || !lead?._embedded?.contacts;
-      if (needsEnrich && lead?.id && subdomain) {
+      // Siempre se consulta el lead completo para no depender de los campos
+      // parciales enviados por el webhook de Kommo.
+      if (lead?.id && subdomain) {
         try {
           const full = await fetchLeadFull(subdomain, lead.id);
+
           lead = {
-            ...full,
             ...lead,
+            ...full,
+
             id: full.id || lead.id,
+
+            // Se conserva el estado recibido en el evento cuando está disponible,
+            // porque representa la transición que activó el escenario.
             status_id: lead.status_id || full.status_id,
             pipeline_id: lead.pipeline_id || full.pipeline_id,
+
+            responsible_user_id:
+              full.responsible_user_id || lead.responsible_user_id,
+
+            // Los campos completos de la API tienen prioridad sobre el webhook.
+            custom_fields_values: Array.isArray(full.custom_fields_values)
+              ? full.custom_fields_values
+              : Array.isArray(lead.custom_fields_values)
+                ? lead.custom_fields_values
+                : Array.isArray(lead.custom_fields)
+                  ? lead.custom_fields
+                  : [],
+
+            _embedded: {
+              ...(lead._embedded || {}),
+              ...(full._embedded || {}),
+            },
           };
+
+          // Evita que normalizeCFs tome por accidente el arreglo parcial antiguo.
+          delete lead.custom_fields;
         } catch (e) {
-          console.warn("Enrichment failed for lead", l.id, e.message);
+          console.warn("Enrichment failed for lead", lead.id, e.message);
         }
       }
 
@@ -891,9 +971,30 @@ app.post("/kommo/translate", async (req, res) => {
 
           mapeoCampos[`${key}_Ids`] = enumIds;
           mapeoCampos[`${key}_Nombres`] = enumNames;
+        } else if (fieldType === "date" || fieldType === "date_time" || fieldType === "birthday") {
+          const rawValue = rawValues[0] ?? "";
+          const isoValue = kommoDateToISO(rawValue, tz);
+
+          fields_pretty.push({
+            field_id: fieldId,
+            name: fieldLabel,
+            type: fieldType,
+            value: rawValue,
+            value_iso: isoValue,
+          });
+
+          // Se conserva el valor original por compatibilidad y se añade una
+          // versión lista para mapear a un campo Date de Salesforce.
+          mapeoCampos[key] = rawValue;
+          mapeoCampos[`${key}_ISO`] = isoValue;
         } else {
           const value = rawValues.length > 1 ? rawValues : rawValues[0] ?? "";
-          fields_pretty.push({ field_id: fieldId, name: fieldLabel, type: fieldType || "text", value });
+          fields_pretty.push({
+            field_id: fieldId,
+            name: fieldLabel,
+            type: fieldType || "text",
+            value,
+          });
           mapeoCampos[key] = value;
         }
       }
