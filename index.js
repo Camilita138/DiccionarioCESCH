@@ -312,7 +312,8 @@ const ASESORES = {
   "1292909": "Gisela Alvarez",
   "1294127": "Melanny Muñoz",
   "1294385": "Jennyfer Chasi",
-  "1298165": "José David Valverde"
+  "1298165": "José David Valverde",
+  "1298507": "Leslie Jaime",
 };
 
 const VENDEDOR_SF = (() => {
@@ -338,6 +339,7 @@ const VENDEDOR_SF = (() => {
     "sabrina bonilla": "Sabrina Bonilla",
     "Jennyfer Chasi": "Jennyfer Chasi",
     "José David Valverde": "José David Valverde",
+    "Leslie Jaime": "Leslie Jaime",
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -360,7 +362,8 @@ const ASESORES_KOMMO_CODE = {
   "Melanny Muñoz": "19",
   "Sabrina Bonilla": "18",
   "Jennyfer Chasi": "02",
-  "José David Valverde": "12"
+  "José David Valverde": "12",
+  "Leslie Jaime": "16"
 };
 const ASESORES_KOMMO_CODE_NORM = Object.fromEntries(
   Object.entries(ASESORES_KOMMO_CODE).map(([name, code]) => [norm(name), code])
@@ -384,7 +387,8 @@ const VENDEDOR_SHORT_TO_CODE = {
   "Melanny Muñoz": "19",
   "Sabrina Bonilla": "18",
   "Jennyfer Chasi": "02",
-  "José David Valverde": "12"
+  "José David Valverde": "12",
+  "Leslie Jaime": "16",
 };
 function resolveAsesorCodigo(asesorLargo, vendedorCorto) {
   if (VENDEDOR_SHORT_TO_CODE[vendedorCorto]) return VENDEDOR_SHORT_TO_CODE[vendedorCorto];
