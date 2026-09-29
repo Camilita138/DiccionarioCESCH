@@ -314,6 +314,7 @@ const ASESORES = {
   "1294385": "Jennyfer Chasi",
   "1298165": "José David Valverde",
   "1298507": "Leslie Jaime",
+  "1298453": "Ana Chonillo",
 };
 
 const VENDEDOR_SF = (() => {
@@ -340,6 +341,7 @@ const VENDEDOR_SF = (() => {
     "Jennyfer Chasi": "Jennyfer Chasi",
     "José David Valverde": "José David Valverde",
     "Leslie Jaime": "Leslie Jaime",
+    "Ana Chonillo": "Ana Chonillo",
   };
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [norm(k), v]));
 })();
@@ -355,7 +357,7 @@ const ASESORES_KOMMO_CODE = {
   "Jhonny López": "09",
   "Alibox": "07",
   "Damaris Ñacato": "14",
-  "Veyda Pinela": "15",
+  "Ana Chonillo": "15",
   "Karina Vivas": "05",
   "María José Rosas": "08",
   "Gisela Alvarez": "17",
@@ -380,7 +382,7 @@ const VENDEDOR_SHORT_TO_CODE = {
   Jhonny: "09",
   Alibox: "07",
   Damaris: "14",
-  Veyda: "15",
+  "Ana Chonillo": "15",
   Karina: "05",
   "María José Rosas": "08",
   "Gisela Alvarez": "17",
